@@ -33,7 +33,7 @@ void btn_left_callback(void *btn) {
     Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
     uint8_t current_pos = usbpd_sink_get_pdo_position();
 
-    // 找到当前position在数组中的索引
+    // 找到当前 position 在数组中的索引
     int8_t current_index = -1;
     for (uint8_t i = 0; i < caps.pdo_count; i++) {
         if (caps.pdos[i].position == current_pos) {
@@ -42,7 +42,7 @@ void btn_left_callback(void *btn) {
         }
     }
 
-    // 向左移动到前一个PDO
+    // 向左移动到前一个 PDO
     if (current_index > 0) {
         current_index--;
     } else {
@@ -57,7 +57,7 @@ void btn_right_callback(void *btn) {
     Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
     uint8_t current_pos = usbpd_sink_get_pdo_position();
 
-    // 找到当前position在数组中的索引
+    // 找到当前 position 在数组中的索引
     int8_t current_index = -1;
     for (uint8_t i = 0; i < caps.pdo_count; i++) {
         if (caps.pdos[i].position == current_pos) {
@@ -66,7 +66,7 @@ void btn_right_callback(void *btn) {
         }
     }
 
-    // 向右移动到下一个PDO
+    // 向右移动到下一个 PDO
     if (current_index < caps.pdo_count - 1) {
         current_index++;
     } else {
@@ -81,6 +81,9 @@ void btn_down_callback(void *btn) {
     printf("btn down, position=%d\n", usbpd_sink_get_pdo_position());
     // 打印完整的 PDO 存储结构内容
     // usbpd_sink_print_source_caps();
+    static uint8_t rotation = 0;
+    rotation = (rotation + 1) % 2;
+    ui_set_rotation(rotation);
 }
 
 void _button_init(void) {

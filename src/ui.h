@@ -5,3 +5,4 @@
 void ui_init(void);
 void ui_update_vbus(uint16_t vbus_mv);
 void ui_update_pd_pos(uint8_t pos);
+void ui_set_rotation(uint8_t rotation);
