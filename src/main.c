@@ -137,7 +137,7 @@ int main(void) {
         static uint32_t last_ui_millis = 0;
         if (millis() - last_ui_millis >= 100) {
             last_ui_millis = millis();
-            ui_update_vbus(get_vbus_voltage());
+            ui_update_vbus(adc_get_vbus_mv());
             ui_update_pd_pos(usbpd_sink_get_pdo_position());
         }
     }

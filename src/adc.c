@@ -3,16 +3,16 @@
 #include "ch32x035.h"
 #include "debug.h"
 
-uint16_t adc_buffer[ADC_BUFFER_SIZE];
+uint16_t adc_buffer[ADC_BUFFER_SIZE] __attribute__((aligned(4)));
 
-static void dma_init(DMA_Channel_TypeDef *DMA_CHx, uint32_t ppadr, uint32_t memadr, uint16_t bufsize) {
-    DMA_InitTypeDef DMA_InitStructure = {0};
+static void dma_init(DMA_Channel_TypeDef *DMA_CHx, uint32_t padr, uint32_t madr, uint32_t bufsize) {
+    DMA_InitTypeDef DMA_InitStructure;
 
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA1, ENABLE);
 
     DMA_DeInit(DMA_CHx);
-    DMA_InitStructure.DMA_PeripheralBaseAddr = ppadr;
-    DMA_InitStructure.DMA_MemoryBaseAddr = memadr;
+    DMA_InitStructure.DMA_PeripheralBaseAddr = padr;
+    DMA_InitStructure.DMA_MemoryBaseAddr = madr;
     DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralSRC;
     DMA_InitStructure.DMA_BufferSize = bufsize;
     DMA_InitStructure.DMA_PeripheralInc = DMA_PeripheralInc_Disable;
@@ -20,41 +20,45 @@ static void dma_init(DMA_Channel_TypeDef *DMA_CHx, uint32_t ppadr, uint32_t mema
     DMA_InitStructure.DMA_PeripheralDataSize = DMA_PeripheralDataSize_HalfWord;
     DMA_InitStructure.DMA_MemoryDataSize = DMA_MemoryDataSize_HalfWord;
     DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
-    DMA_InitStructure.DMA_Priority = DMA_Priority_VeryHigh;
+    DMA_InitStructure.DMA_Priority = DMA_Priority_High;
     DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
     DMA_Init(DMA_CHx, &DMA_InitStructure);
+    DMA_Cmd(DMA_CHx, ENABLE);
 }
 
 void adc_init(void) {
-    ADC_InitTypeDef ADC_InitStructure = {0};
-    GPIO_InitTypeDef GPIO_InitStructure = {0};
+    {
+        GPIO_InitTypeDef GPIO_InitStructure = {0};
+        ADC_InitTypeDef ADC_InitStructure = {0};
 
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
+        RCC_APB2PeriphClockCmd(ADC_GPIO_CLK, ENABLE);
+        RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
 
-    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_0;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
-    GPIO_Init(GPIOB, &GPIO_InitStructure);
+        GPIO_InitStructure.GPIO_Pin = ADC_GPIO_PIN;
+        GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
+        GPIO_Init(ADC_GPIO_PORT, &GPIO_InitStructure);
 
-    ADC_DeInit(ADC1);
+        ADC_CLKConfig(ADC1, ADC_CLK_Div16);
 
-    ADC_CLKConfig(ADC1, ADC_CLK_Div6);
+        ADC_InitStructure.ADC_Mode = ADC_Mode_Independent;
+        ADC_InitStructure.ADC_ScanConvMode = ENABLE;
+        ADC_InitStructure.ADC_ContinuousConvMode = ENABLE;
+        ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_None;
+        ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
+        ADC_InitStructure.ADC_NbrOfChannel = ADC_CHANNEL_COUNT;
+        ADC_DeInit(ADC1);
+        ADC_Init(ADC1, &ADC_InitStructure);
 
-    ADC_InitStructure.ADC_Mode = ADC_Mode_Independent;
-    ADC_InitStructure.ADC_ScanConvMode = DISABLE;
-    ADC_InitStructure.ADC_ContinuousConvMode = ENABLE;
-    ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_None;
-    ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
-    ADC_InitStructure.ADC_NbrOfChannel = 1;
-    ADC_Init(ADC1, &ADC_InitStructure);
-
-    ADC_DMACmd(ADC1, ENABLE);
-    ADC_Cmd(ADC1, ENABLE);
+        ADC_Cmd(ADC1, ENABLE);
+    }
 
     dma_init(DMA1_Channel1, (uint32_t)&ADC1->RDATAR, (uint32_t)adc_buffer, ADC_BUFFER_SIZE);
-    DMA_Cmd(DMA1_Channel1, ENABLE);
 
-    ADC_RegularChannelConfig(ADC1, ADC_Channel_8, 1, ADC_SampleTime_11Cycles);
+    ADC_RegularChannelConfig(ADC1, ADC_CHANNEL, 1, ADC_SampleTime_11Cycles);
+    ADC_RegularChannelConfig(ADC1, ADC_Channel_Vrefint, 2, ADC_SampleTime_11Cycles);
+
+    ADC_DMACmd(ADC1, ENABLE);
+
     ADC_SoftwareStartConvCmd(ADC1, ENABLE);
 }
 
@@ -70,7 +74,6 @@ static bool find_calibration_segment(float value, size_t *index) {
         value > (float)VBUS_CAL_POINTS[VBUS_CAL_POINTS_COUNT - 1].measured) {
         return false;
     }
-
     // 查找区间
     for (size_t i = 0; i < VBUS_CAL_POINTS_COUNT - 1; i++) {
         if (value >= (float)VBUS_CAL_POINTS[i].measured &&
@@ -79,31 +82,16 @@ static bool find_calibration_segment(float value, size_t *index) {
             return true;
         }
     }
-
     return false;
 }
 
 /**
- * @brief       计算 ADC DMA 缓冲区的平均值
- * @param       None
- * @return      缓冲区内所有数据的平均值
+ * @brief       将 ADC 原始值转换为 VBUS 电压值
+ * @param       adc_raw 原始 ADC 采样值
+ * @return      VBUS 电压值，单位 mV
  */
-static uint16_t adc_calculate_buffer_average(void) {
-    uint32_t sum = 0;
-    for (uint16_t i = 0; i < ADC_BUFFER_SIZE; i++) {
-        sum += adc_buffer[i];
-    }
-    return (uint16_t)(sum / ADC_BUFFER_SIZE);
-}
-
-/**
- * @brief       获取 VBUS 电压值
- * @param       None
- * @return      VBUS 电压值, 单位 mV
- */
-uint16_t get_vbus_voltage(void) {
-    uint16_t adc_value = adc_calculate_buffer_average();
-    float vbus_uncalibrated = (float)adc_value * VBUS_CONVERT_SCALE;
+uint16_t adc_raw_to_vbus_mv(uint16_t adc_raw) {
+    float vbus_uncalibrated = (float)adc_raw * VBUS_CONVERT_SCALE;
     float vbus_calibrated;
 
     if (VBUS_CAL_ENABLE) {
@@ -134,6 +122,53 @@ uint16_t get_vbus_voltage(void) {
     }
 
     // 限幅并四舍五入
-    vbus_calibrated = fmaxf(0.0f, fminf(vbus_calibrated, 65535.0f));
+    vbus_calibrated = vbus_calibrated < 0.0f ? 0.0f : vbus_calibrated;
+    vbus_calibrated = vbus_calibrated > 65535.0f ? 65535.0f : vbus_calibrated;
     return (uint16_t)(vbus_calibrated + 0.5f);
+}
+
+/**
+ * @brief       计算 ADC DMA Buffer 的平均值
+ * @param       None
+ * @return      adc_raw 平均值
+ */
+uint16_t adc_get_avg_raw() {
+    uint32_t sum = 0;
+
+    for (uint16_t i = 0; i < ADC_SAMPLE_COUNT; i++) {
+        sum += adc_buffer[i * ADC_CHANNEL_COUNT + 0];
+    }
+
+    return (uint16_t)(sum / ADC_SAMPLE_COUNT);
+}
+
+/**
+ * @brief       获取 VBUS 电压值
+ * @param       None
+ * @return      VBUS 电压值，单位 mV
+ */
+uint16_t adc_get_vbus_mv(void) {
+    return adc_raw_to_vbus_mv(adc_get_avg_raw());
+}
+
+/**
+ * @brief       获取 VDD 电压值
+ * @param       None
+ * @return      VDD 电压值，单位 mV
+ */
+uint16_t adc_get_vdd_mv(void) {
+    // for (uint16_t i = 0; i < ADC_BUFFER_SIZE; i++) {
+    //     printf("%d,", adc_buffer[i]);
+    // }
+    // printf("\n");
+
+    uint32_t sum = 0;
+
+    for (uint16_t i = 0; i < ADC_SAMPLE_COUNT; i++) {
+        sum += adc_buffer[i * ADC_CHANNEL_COUNT + 1];
+    }
+
+    uint16_t vdd_adc_raw = sum / ADC_SAMPLE_COUNT;
+    uint16_t vdd_mv = 1200 * 4095 / vdd_adc_raw;
+    return vdd_mv;
 }
