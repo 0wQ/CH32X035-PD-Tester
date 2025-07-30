@@ -1,17 +1,15 @@
 #include "usbpd_sink.h"
 
-#include <string.h>
-
 #include "debug.h"
 
-#if 1
+#if 0
 #define pd_printf(format, ...) printf(format, ##__VA_ARGS__)
 #else
 #define pd_printf(x...)
 #endif
 
 static pd_control_t pdControl_g = {
-    .cc_State = CC_IDLE,          // CC 状态机当前状态
+    .cc_State = CC_DISCONNECTED,  // CC 状态机当前状态
     .cc1_ConnectTimes = 0,        // CC1 连接检测计数
     .cc2_ConnectTimes = 0,        // CC2 连接检测计数
     .cc_EPR_Ready = 0,            // EPR 模式就绪标志
@@ -116,6 +114,8 @@ static void usbpd_sink_rx_mode(void) {
  * @brief  复位 PD 通信状态
  */
 static void usbpd_sink_reset(void) {
+    NVIC_DisableIRQ(USBPD_IRQn);
+
     USBPD->PORT_CC1 = CC_CMP_66;
     USBPD->PORT_CC2 = CC_CMP_66;
 
@@ -126,8 +126,8 @@ static void usbpd_sink_reset(void) {
     pdControl_g.cc1_ConnectTimes = 0;
     pdControl_g.cc2_ConnectTimes = 0;
     pdControl_g.cc_NoneTimes = 0;
-    pdControl_g.cc_State = CC_IDLE;
-    pdControl_g.cc_LastState = CC_IDLE;
+    pdControl_g.cc_State = CC_CHECK_CONNECT;
+    pdControl_g.cc_LastState = CC_CHECK_CONNECT;
     pdControl_g.cc_SinkMessageID = 0;
     pdControl_g.cc_SinkGoodCRCOver = 0;
     pdControl_g.cc_SourceGoodCRCOver = 0;
@@ -135,7 +135,6 @@ static void usbpd_sink_reset(void) {
     pdControl_g.cc_USBPD_READY = 0;
 
     pdControl_g.cc_PDO_Pos = 1;  // 改为 99 上电会请求最大档位
-    pdControl_g.cc_Last_PDO_Pos = 0;
 
     pdControl_g.cc_Source_EPR_Capable = 0;  // 默认 source 不支持 EPR
     pdControl_g.cc_Cable_EPR_Capable = 1;   // 默认 cable 支持 EPR
@@ -154,7 +153,7 @@ static void usbpd_sink_reset(void) {
  * @param  length      数据长度
  * @param  sop         起始包类型
  */
-static void usbpd_sink_phy_send_data(uint8_t* pBuf, uint8_t length, uint8_t sop) {
+static void usbpd_sink_phy_send_data(uint8_t *pBuf, uint8_t length, uint8_t sop) {
     USBPD->CONFIG |= IE_TX_END;
 
     if ((USBPD->CONFIG & CC_SEL) == CC_SEL) {
@@ -198,7 +197,7 @@ static USBPD_CC_State_t usbpd_sink_check_cc_connect(void) {
 }
 
 /******************************************************************************
- * SPR 相关函数 - SPR Functions
+ * SPR 相关函数
  *****************************************************************************/
 
 /**
@@ -207,12 +206,12 @@ static USBPD_CC_State_t usbpd_sink_check_cc_connect(void) {
  * @param  pdControl  PD 控制结构体指针
  * @param  txData     发送缓冲区指针
  */
-static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t* pdControl, uint8_t* txData) {
-    // 先找到最大的 fixed PDO
+static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t *pdControl, uint8_t *txData) {
+    // 先找到最大的 SPR Fixed PDO
     uint8_t max_spr_fixed_pdo_pos = 0;
     uint16_t max_spr_fixed_voltage = 0;
     for (uint8_t i = 0; i < pdControl->source_caps.pdo_count; i++) {
-        Source_PDO_t* current_pdo = &pdControl->source_caps.pdos[i];
+        Source_PDO_t *current_pdo = &pdControl->source_caps.pdos[i];
         if (current_pdo->type == PDO_TYPE_FIXED_SUPPLY && current_pdo->fixed.voltage <= 20000) {
             if (current_pdo->fixed.voltage >= max_spr_fixed_voltage) {
                 max_spr_fixed_voltage = current_pdo->fixed.voltage;
@@ -221,14 +220,14 @@ static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
         }
     }
 
-    // 如果请求的位置超出范围, 使用最大的 SPR fixed PDO
+    // 如果请求的位置超出范围，使用最大的 SPR Fixed PDO
     if (position > max_spr_fixed_pdo_pos && max_spr_fixed_pdo_pos > 0) {
         pd_printf("Position %d out of range, using max SPR fixed PDO at position %d\n", position, max_spr_fixed_pdo_pos);
         position = max_spr_fixed_pdo_pos;
     }
 
     // 查找对应位置的 PDO
-    Source_PDO_t* pdo = NULL;
+    Source_PDO_t *pdo = NULL;
     for (uint8_t i = 0; i < pdControl->source_caps.pdo_count; i++) {
         if (pdControl->source_caps.pdos[i].position == position) {
             pdo = &pdControl->source_caps.pdos[i];
@@ -239,7 +238,7 @@ static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
     if (pdo == NULL || pdo->type != PDO_TYPE_FIXED_SUPPLY) {
         return;
     }
-    // 检查 SPR Fixed 电压应小于等于 20V
+    // 检查 SPR Fixed PDO 电压应小于等于 20V
     if (pdo->fixed.voltage > 20000) {
         return;
     }
@@ -259,12 +258,12 @@ static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
     rdo.FixedAndVariableRequestDataObject.USBCommunicationsCapable = 1u;
     rdo.FixedAndVariableRequestDataObject.NoUSBSuspend = 1u;
 
-    // 在最后一个请求消息中, RDO 中必须正确设置 EPR Capable, 后续才能进入 EPR 模式
+    // 在最后一个请求消息中，RDO 中必须正确设置 EPR Capable, 后续才能进入 EPR 模式
     if (pdControl->cc_Source_EPR_Capable) {
         rdo.FixedAndVariableRequestDataObject.EPRCapable = 1u;
     }
 
-    *(uint16_t*)&txData[0] = messageHeader.d16;
+    *(uint16_t *)&txData[0] = messageHeader.d16;
     txData[2] = rdo.d32 & 0xff;
     txData[3] = (rdo.d32 >> 8) & 0xff;
     txData[4] = (rdo.d32 >> 16) & 0xff;
@@ -272,9 +271,6 @@ static void usbpd_sink_spr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
 
     // 发送之后再打印日志有可能会漏 source 回复的 goodcrc, 导致 message id 未自增
     pd_printf("Sending SPR request:\n  Position: %d\n  Msg Header: 0x%04x\n  SPR FRDO: 0x%08lx\n", position, messageHeader.d16, rdo.d32);
-
-    // pdControl_g.cc_Last_PDO_Pos = position;
-    // pdControl_g.cc_PDO_Pos = position;
 
     usbpd_sink_phy_send_data(txData, 6, UPD_SOP0);
 }
@@ -320,7 +316,7 @@ static void usbpd_sink_epr_keep_alive(void) {
  * @param  pdControl  PD 控制结构体指针
  * @param  txData     发送缓冲区指针
  */
-static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdControl, uint8_t* txData) {
+static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t *pdControl, uint8_t *txData) {
     // 检查是否已进入 EPR 模式
     if (!pdControl->cc_EPR_Ready) {
         return;
@@ -330,7 +326,7 @@ static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
     uint8_t max_fixed_pdo_pos = 0;
     uint16_t max_fixed_voltage = 0;
     for (uint8_t i = 0; i < pdControl->source_caps.pdo_count; i++) {
-        Source_PDO_t* current_pdo = &pdControl->source_caps.pdos[i];
+        Source_PDO_t *current_pdo = &pdControl->source_caps.pdos[i];
         if (current_pdo->type == PDO_TYPE_FIXED_SUPPLY && current_pdo->fixed.voltage <= 28000) {
             if (current_pdo->fixed.voltage >= max_fixed_voltage) {
                 max_fixed_voltage = current_pdo->fixed.voltage;
@@ -339,7 +335,7 @@ static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
         }
     }
 
-    // 如果请求的位置超出范围, 使用最大的 Fixed PDO
+    // 如果请求的位置超出范围，使用最大的 Fixed PDO
     if (position > max_fixed_pdo_pos && max_fixed_pdo_pos > 0) {
         pd_printf("Position %d out of range, using max EPR fixed PDO at position %d\n", position, max_fixed_pdo_pos);
         position = max_fixed_pdo_pos;
@@ -354,7 +350,7 @@ static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
     header.MessageHeader.SpecificationRevision = USBPD_SPECIFICATION_REV3;
 
     // 查找对应位置的 PDO
-    Source_PDO_t* pdo = NULL;
+    Source_PDO_t *pdo = NULL;
     for (uint8_t i = 0; i < pdControl->source_caps.pdo_count; i++) {
         if (pdControl->source_caps.pdos[i].position == position) {
             pdo = &pdControl->source_caps.pdos[i];
@@ -382,17 +378,13 @@ static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
     rdo.FixedAndVariableRequestDataObject.MaxOperatingCurrent10mAunits = pdo->fixed.current / 10;
     rdo.FixedAndVariableRequestDataObject.OperatingCurrentIn10mAunits = pdo->fixed.current / 10;
 
-    *(uint16_t*)&txData[0] = header.d16;
-    *(uint32_t*)&txData[2] = rdo.d32;
+    *(uint16_t *)&txData[0] = header.d16;
+    *(uint32_t *)&txData[2] = rdo.d32;
 
-    // EPR 请求需要包含 PDO 的副本, 使用原始 PDO 数据
-    *(uint32_t*)&txData[6] = pdo->raw;
+    // EPR 请求需要包含 PDO 的副本，使用原始 PDO 数据
+    *(uint32_t *)&txData[6] = pdo->raw;
 
-    pd_printf("Sending EPR request:\n  Position: %d\n  Msg Header: 0x%04x\n  EPR FRDO: 0x%08lx\n  Copy of PDO: 0x%08lx\n",
-              position, header.d16, rdo.d32, pdo->raw);
-
-    // pdControl_g.cc_Last_PDO_Pos = position;
-    // pdControl_g.cc_PDO_Pos = position;
+    pd_printf("Sending EPR request:\n  Position: %d\n  Msg Header: 0x%04x\n  EPR FRDO: 0x%08lx\n  Copy of PDO: 0x%08lx\n", position, header.d16, rdo.d32, pdo->raw);
 
     usbpd_sink_phy_send_data(txData, 10, UPD_SOP0);
 }
@@ -408,7 +400,7 @@ static void usbpd_sink_epr_fixed_pdo_request(uint8_t position, pd_control_t* pdC
  * @param  is_epr      是否是 EPR
  * @param  pdControl   PD 控制结构体指针
  */
-static void usbpd_sink_pdo_analyse(uint8_t* pdo_data, uint8_t pdo_num, bool is_epr, pd_control_t* pdControl) {
+static void usbpd_sink_pdo_analyse(uint8_t *pdo_data, uint8_t pdo_num, bool is_epr, pd_control_t *pdControl) {
     if (pdo_num == 0 || pdo_data == NULL) {
         return;
     }
@@ -424,12 +416,12 @@ static void usbpd_sink_pdo_analyse(uint8_t* pdo_data, uint8_t pdo_num, bool is_e
 
     USBPD_SourcePDO_t pdo_parse;
     for (uint8_t i = 0; i < pdo_num; i++) {
-        pdo_parse.d32 = *(uint32_t*)(&pdo_data[i * 4]);
-        Source_PDO_t* pdo = &pdControl->source_caps.pdos[pdControl->source_caps.pdo_count];
+        pdo_parse.d32 = *(uint32_t *)(&pdo_data[i * 4]);
+        Source_PDO_t *pdo = &pdControl->source_caps.pdos[pdControl->source_caps.pdo_count];
 
         pd_printf("  PDO[#%d][RAW:0x%08lx]: ", i + 1, pdo_parse.d32);
 
-        // 保存原始PDO数据
+        // 保存原始 PDO 数据
         pdo->raw = pdo_parse.d32;
         pdo->position = i + 1;
 
@@ -496,9 +488,10 @@ static void usbpd_sink_pdo_analyse(uint8_t* pdo_data, uint8_t pdo_num, bool is_e
                         pd_printf("SPR AVS: 9V-15V: %dmA, 15V-20V: %dmA\n", max_current_9v_15v, max_current_15v_20v);
                         break;
                     }
-                    default:
+                    default: {
                         pd_printf("Reserved APDO type\n");
                         break;
+                    }
                 }
                 break;
             }
@@ -515,10 +508,8 @@ static void usbpd_sink_process(void) {
     USBPD_MessageHeader_t messageHeader;
 
     switch (pdControl_g.cc_State) {
-        case CC_IDLE: {
-            NVIC_DisableIRQ(USBPD_IRQn);
+        case CC_DISCONNECTED: {
             usbpd_sink_reset();
-            pdControl_g.cc_State = CC_CHECK_CONNECT;
             break;
         }
         case CC_CONNECT: {
@@ -529,10 +520,9 @@ static void usbpd_sink_process(void) {
             }
             break;
         }
-        case CC_SOURCE_CAP: {
+        case CC_SPR_SOURCE_CAP_RECEIVED: {
             if (pdControl_g.cc_SinkGoodCRCOver) {
                 pdControl_g.cc_SinkGoodCRCOver = 0;
-                // usbpd_sink_spr_pdo_analyse(usbpd_rx_buffer_pdo_count, &pdControl_g);
                 usbpd_sink_pdo_analyse(pdControl_g.cc_spr_source_cap_buffer, pdControl_g.cc_spr_source_cap_buffer_pdo_count, false, &pdControl_g);
                 pdControl_g.cc_State = CC_SEND_SPR_REQUEST;
             }
@@ -540,12 +530,13 @@ static void usbpd_sink_process(void) {
         }
         case CC_SEND_SPR_REQUEST: {
             if (pdControl_g.cc_LastState != pdControl_g.cc_State) {
-                // pdControl_g.cc_Last_PDO_Pos = pdControl_g.cc_PDO_Pos;
                 usbpd_sink_spr_fixed_pdo_request(pdControl_g.cc_PDO_Pos, &pdControl_g, usbpd_tx_buffer);
             }
 
+            // sink 发送请求后，等待 source 回复 goodcrc
             if (pdControl_g.cc_SourceGoodCRCOver) {
                 pdControl_g.cc_SourceGoodCRCOver = 0;
+                pdControl_g.cc_EPR_KeepAlive_Timer = 0;  // 重置计时
                 pdControl_g.cc_State = CC_WAIT_ACCEPT;
             }
             break;
@@ -553,48 +544,16 @@ static void usbpd_sink_process(void) {
         case CC_PS_RDY: {
             if (pdControl_g.cc_SinkGoodCRCOver) {
                 pdControl_g.cc_SinkGoodCRCOver = 0;
-
                 pdControl_g.cc_USBPD_READY = 1;
-                pdControl_g.cc_Last_PDO_Pos = pdControl_g.cc_PDO_Pos;
 
-                // 如果已进入 EPR 模式, 则不发送
-                if (pdControl_g.cc_EPR_Ready) {
-                    pdControl_g.cc_State = CC_WAIT_EPR_RESPONSE;
-                    break;
-                }
-
-                // 如果 source 和 cable 都支持 EPR, 则进入 EPR 模式
-                if (pdControl_g.cc_Source_EPR_Capable && pdControl_g.cc_Cable_EPR_Capable) {
+                // 如果未进入 EPR 模式，并且 source 和 cable 都支持 EPR, 则进入 EPR 模式
+                if (!pdControl_g.cc_EPR_Ready && pdControl_g.cc_Source_EPR_Capable && pdControl_g.cc_Cable_EPR_Capable) {
                     pd_printf("Found EPR capable PDO, entering EPR mode\n");
                     pdControl_g.cc_State = CC_SEND_EPR_MODE_ENTER;
                     break;
                 }
 
-                // 如果不支持 EPR, 则获取 Source Capability
-                // pdControl_g.cc_State = CC_GET_SOURCE_CAP;
-
-                pdControl_g.cc_State = CC_WAIT_PS_RDY;
-            }
-            break;
-        }
-        case CC_GET_SOURCE_CAP: {
-            // 如果已进入 EPR 模式, 则不发送
-            if (pdControl_g.cc_EPR_Ready) {
-                pdControl_g.cc_State = CC_WAIT_EPR_RESPONSE;
-                break;
-            }
-
-            if (pdControl_g.cc_LastState != pdControl_g.cc_State) {
-                messageHeader.d16 = 0u;
-                messageHeader.MessageHeader.MessageID = pdControl_g.cc_SinkMessageID;
-                messageHeader.MessageHeader.MessageType = USBPD_CONTROL_MSG_GET_SRC_CAP;
-                messageHeader.MessageHeader.NumberOfDataObjects = 0u;
-                messageHeader.MessageHeader.SpecificationRevision = pdControl_g.cc_PD_Version;
-                *(uint16_t*)&usbpd_tx_buffer[0] = messageHeader.d16;
-
-                usbpd_sink_phy_send_data(usbpd_tx_buffer, 2, UPD_SOP0);
-
-                pdControl_g.cc_State = CC_WAIT_SOURCE_CAP;
+                pdControl_g.cc_State = CC_IDLE;
             }
             break;
         }
@@ -607,11 +566,11 @@ static void usbpd_sink_process(void) {
                 messageHeader.MessageHeader.MessageID = pdControl_g.cc_SinkMessageID;
 
                 uint32_t eprmdo = 0;
-                eprmdo |= (1u << 24);  // Action = Enter (0x01) 31, 24;
-                eprmdo |= (0u << 16);
+                eprmdo |= (1u << 24);  // Action(B31-24), Enter(0x01)
+                eprmdo |= (0u << 16);  // Data(B23-16)
 
-                *(uint16_t*)&usbpd_tx_buffer[0] = messageHeader.d16;
-                *(uint32_t*)&usbpd_tx_buffer[2] = eprmdo;
+                *(uint16_t *)&usbpd_tx_buffer[0] = messageHeader.d16;
+                *(uint32_t *)&usbpd_tx_buffer[2] = eprmdo;
 
                 pd_printf("EPR mode: send Enter\n");
 
@@ -620,9 +579,11 @@ static void usbpd_sink_process(void) {
                 pdControl_g.cc_EPR_Ready = 0;
             }
 
+            // sink 发送请求后，等待 source 回复 goodcrc
             if (pdControl_g.cc_SourceGoodCRCOver) {
                 pdControl_g.cc_SourceGoodCRCOver = 0;
-                pdControl_g.cc_State = CC_WAIT_EPR_RESPONSE;
+                pdControl_g.cc_EPR_KeepAlive_Timer = 0;  // 重置计时
+                pdControl_g.cc_State = CC_WAIT_EPR_MODE_ENTER_RESPONSE;
             }
             break;
         }
@@ -647,8 +608,8 @@ static void usbpd_sink_process(void) {
                 reqExtHeader.ExtendedMessageHeader.Chunked = 1;
                 reqExtHeader.ExtendedMessageHeader.DataSize = 0;
 
-                *(uint16_t*)&usbpd_tx_buffer[0] = reqHeader.d16;
-                *(uint16_t*)&usbpd_tx_buffer[2] = reqExtHeader.d16;
+                *(uint16_t *)&usbpd_tx_buffer[0] = reqHeader.d16;
+                *(uint16_t *)&usbpd_tx_buffer[2] = reqExtHeader.d16;
                 usbpd_tx_buffer[4] = 0;
                 usbpd_tx_buffer[5] = 0;
 
@@ -656,9 +617,19 @@ static void usbpd_sink_process(void) {
                 pdControl_g.cc_ChunkRequestSent = 1;
             }
 
+            // sink 发送请求后，等待 source 回复 goodcrc
             if (pdControl_g.cc_SourceGoodCRCOver) {
                 pdControl_g.cc_SourceGoodCRCOver = 0;
-                pdControl_g.cc_State = CC_WAIT_EPR_RESPONSE;
+                pdControl_g.cc_State = CC_IDLE;
+            }
+            break;
+        }
+        case CC_EPR_SOURCE_CAP_RECEIVED: {
+            if (pdControl_g.cc_SinkGoodCRCOver) {
+                pdControl_g.cc_SinkGoodCRCOver = 0;
+                pdControl_g.cc_EPR_KeepAlive_Timer = 0;  // 重置计时
+                usbpd_sink_pdo_analyse(pdControl_g.cc_EPRSourceCapBuffer, pdControl_g.cc_EPRSourceCapBufferSize / 4, true, &pdControl_g);
+                pdControl_g.cc_State = CC_SEND_EPR_REQUEST;
             }
             break;
         }
@@ -667,9 +638,12 @@ static void usbpd_sink_process(void) {
                 usbpd_sink_epr_fixed_pdo_request(pdControl_g.cc_PDO_Pos, &pdControl_g, usbpd_tx_buffer);
             }
 
+            // sink 发送请求后，等待 source 回复 goodcrc
             if (pdControl_g.cc_SourceGoodCRCOver) {
                 pdControl_g.cc_SourceGoodCRCOver = 0;
-                pdControl_g.cc_State = CC_WAIT_ACCEPT;
+                pdControl_g.cc_EPR_KeepAlive_Timer = 0;  // 重置计时
+                // pdControl_g.cc_State = CC_WAIT_ACCEPT;
+                pdControl_g.cc_State = CC_WAIT_PS_RDY;
             }
             break;
         }
@@ -683,12 +657,12 @@ static void usbpd_sink_process(void) {
 }
 
 /**
- * @brief  分析和处理 PD 协议消息, 并回复 GoodCRC
+ * @brief  分析和处理 PD 协议消息，并回复 GoodCRC
  * @param  messageHeader  消息头指针
  * @param  pdControl      PD 控制结构体指针
  * @note   由 USBPD_IRQHandler 调用
  */
-static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, pd_control_t* pdControl) {
+static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t *messageHeader, pd_control_t *pdControl) {
     uint8_t sendGoodCRCFlag = 1;
 
     if (messageHeader->MessageHeader.Extended == 0u) {
@@ -725,18 +699,18 @@ static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, p
             // data message
             switch (messageHeader->MessageHeader.MessageType) {
                 case USBPD_DATA_MSG_SRC_CAP: {
-                    pdControl->cc_State = CC_SOURCE_CAP;
+                    pdControl->cc_State = CC_SPR_SOURCE_CAP_RECEIVED;
                     pdControl->cc_PD_Version = messageHeader->MessageHeader.SpecificationRevision;
                     // 先保存原始数据
                     memcpy(pdControl->cc_spr_source_cap_buffer, &usbpd_rx_buffer[2], 28);
                     // 更新 SPR PDO 数量
                     pdControl->cc_spr_source_cap_buffer_pdo_count = messageHeader->MessageHeader.NumberOfDataObjects;
-                    // 解析 SPR PDO (直接在这里解析可能会导致收到 SourceCap 后, 未及时回复 Request, 导致 SoftReset)
+                    // 解析 SPR PDO (直接在这里解析可能会导致收到 SourceCap 后，未及时回复 Request, 导致 SoftReset)
                     // usbpd_sink_pdo_analyse(pdControl->spr_source_cap_buffer, messageHeader->MessageHeader.NumberOfDataObjects, false, pdControl);
                     break;
                 }
                 case USBPD_DATA_MSG_EPR_MODE: {
-                    uint32_t eprmdo = *(uint32_t*)&usbpd_rx_buffer[2];
+                    uint32_t eprmdo = *(uint32_t *)&usbpd_rx_buffer[2];
                     uint8_t action = (eprmdo >> 24) & 0xF;
                     uint8_t data = (eprmdo >> 16) & 0xFF;
 
@@ -748,6 +722,7 @@ static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, p
                         case 3:  // Enter Succeeded
                             pdControl->cc_EPR_Ready = 1;
                             pdControl->cc_EPR_KeepAlive_Timer = 0;  // 开始计时
+                            pdControl->cc_State = CC_WAIT_EPR_MODE_SOURCE_CAP;
                             pd_printf("EPR mode: Enter Succeeded\n");
                             break;
                         case 4:  // Enter Failed
@@ -789,17 +764,17 @@ static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, p
         my_messageHeader.MessageHeader.MessageType = USBPD_CONTROL_MSG_GOODCRC;
         my_messageHeader.MessageHeader.SpecificationRevision = pdControl->cc_PD_Version;
 
-        *(uint16_t*)&usbpd_tx_buffer[0] = my_messageHeader.d16;
+        *(uint16_t *)&usbpd_tx_buffer[0] = my_messageHeader.d16;
         usbpd_sink_phy_send_data(usbpd_tx_buffer, 2, UPD_SOP0);
     }
 
     // Extended message
     if (messageHeader->MessageHeader.Extended == 1u) {
         USBPD_ExtendedMessageHeader_t extHeader;
-        extHeader.d16 = *(uint16_t*)&usbpd_rx_buffer[2];
+        extHeader.d16 = *(uint16_t *)&usbpd_rx_buffer[2];
 
         switch (messageHeader->MessageHeader.MessageType) {
-            case ExtendedMessageType_EPRSourceCapabilities: {
+            case ExtendedMessageType_EPRSourceCapabilities: {  // 收到 EPR Source Cap
                 if (extHeader.ExtendedMessageHeader.Chunked) {
                     uint8_t chunk_number = extHeader.ExtendedMessageHeader.ChunkNumber;
 
@@ -811,11 +786,10 @@ static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, p
                     pdControl->cc_EPRSourceCapBufferSize += bytes_in_chunk;
 
                     if (bytes_in_chunk < 26) {
-                        NVIC_DisableIRQ(USBPD_IRQn);
-                        usbpd_sink_pdo_analyse(pdControl->cc_EPRSourceCapBuffer, pdControl->cc_EPRSourceCapBufferSize / 4, true, pdControl);
-                        NVIC_EnableIRQ(USBPD_IRQn);
-                        pdControl->cc_State = CC_SEND_EPR_REQUEST;
+                        // 在状态机中解析 EPR Source Capability
+                        pdControl->cc_State = CC_EPR_SOURCE_CAP_RECEIVED;
                     } else {
+                        // 分块
                         pdControl->cc_State = CC_REQUEST_EPR_CHUNK;
                         pdControl->cc_CurrentChunkNumber = chunk_number;
                     }
@@ -838,51 +812,6 @@ static void usbpd_sink_protocol_analysis(USBPD_MessageHeader_t* messageHeader, p
 }
 
 /******************************************************************************
- * 辅助函数
- *****************************************************************************/
-
-/**
- * @brief  打印 pdControl_g.source_caps
- */
-void usbpd_sink_print_source_caps(void) {
-    printf("\nSource Capabilities Summary:\n");
-    printf("  Total PDOs: %d\n", pdControl_g.source_caps.pdo_count);
-    printf("  EPR Status: %s\n", pdControl_g.cc_EPR_Ready ? "Ready" : "Not Ready");
-    printf("  Source EPR Support: %s\n", pdControl_g.cc_Source_EPR_Capable ? "Yes" : "No");
-    printf("  Source Power Data Objects:\n");
-
-    for (uint8_t i = 0; i < pdControl_g.source_caps.pdo_count; i++) {
-        const Source_PDO_t* pdo = &pdControl_g.source_caps.pdos[i];
-        printf("  PDO #%d [RAW:0x%08lx]: ", pdo->position, pdo->raw);
-
-        switch (pdo->type) {
-            case PDO_TYPE_FIXED_SUPPLY: {
-                printf("%s Fixed - %dmV, %dmA%s\n",
-                       pdo->fixed.voltage <= 20000 ? "SPR" : "EPR",
-                       pdo->fixed.voltage,
-                       pdo->fixed.current,
-                       pdo->fixed.epr_capable ? " (EPR Capable)" : "");
-                break;
-            }
-            default: {
-                // 不支持的 PDO 类型
-                printf("Unsupported Type\n");
-                break;
-            }
-        }
-    }
-    printf("\n");
-}
-
-/**
- * @brief  获取 Source Capabilities
- * @return Source Capabilities
- */
-Source_PDO_Storage_t usbpd_sink_get_source_caps(void) {
-    return pdControl_g.source_caps;
-}
-
-/******************************************************************************
  * 中断处理函数
  *****************************************************************************/
 
@@ -894,7 +823,7 @@ void USBPD_IRQHandler(void) {
     USBPD_MessageHeader_t messageHeader;
 
     if (USBPD->STATUS & IF_RX_ACT) {
-        messageHeader.d16 = *(uint16_t*)usbpd_rx_buffer;
+        messageHeader.d16 = *(uint16_t *)usbpd_rx_buffer;
         if ((USBPD->STATUS & MASK_PD_STAT) == PD_RX_SOP0) {
             if (USBPD->BMC_BYTE_CNT >= 6) {
                 usbpd_sink_protocol_analysis(&messageHeader, &pdControl_g);
@@ -928,13 +857,21 @@ void TIM3_IRQHandler(void) {
     // EPR keep alive 处理
     if (pdControl_g.cc_EPR_Ready) {
         pdControl_g.cc_EPR_KeepAlive_Timer++;
-        if (pdControl_g.cc_EPR_KeepAlive_Timer >= EPR_KEEP_ALIVE_TIMEOUT) {
-            pdControl_g.cc_EPR_KeepAlive_Timer = 0;
-            usbpd_sink_epr_keep_alive();
+
+        // 在某些状态跳过 keep alive
+        if (pdControl_g.cc_State != CC_WAIT_ACCEPT &&
+            pdControl_g.cc_State != CC_WAIT_PS_RDY &&
+            pdControl_g.cc_State != CC_WAIT_EPR_MODE_ENTER_RESPONSE &&
+            pdControl_g.cc_State != CC_WAIT_EPR_MODE_SOURCE_CAP &&
+            pdControl_g.cc_State != CC_EPR_SOURCE_CAP_RECEIVED) {
+            if (pdControl_g.cc_EPR_KeepAlive_Timer >= EPR_KEEP_ALIVE_TIMEOUT) {
+                pdControl_g.cc_EPR_KeepAlive_Timer = 0;
+                usbpd_sink_epr_keep_alive();
+            }
         }
     }
 
-    // 检测 CC 状态
+    // CC_CHECK_CONNECT 时检测 CC 状态
     USBPD_CC_State_t ccLine;
     if (pdControl_g.cc_State == CC_CHECK_CONNECT) {
         ccLine = usbpd_sink_check_cc_connect();
@@ -970,6 +907,51 @@ void TIM3_IRQHandler(void) {
     usbpd_sink_process();
 }
 
+/******************************************************************************
+ * 辅助函数
+ *****************************************************************************/
+
+/**
+ * @brief  打印 pdControl_g.source_caps
+ */
+void usbpd_sink_print_source_caps(void) {
+    printf("\nSource Capabilities Summary:\n");
+    printf("  Total PDOs: %d\n", pdControl_g.source_caps.pdo_count);
+    printf("  EPR Status: %s\n", pdControl_g.cc_EPR_Ready ? "Ready" : "Not Ready");
+    printf("  Source EPR Support: %s\n", pdControl_g.cc_Source_EPR_Capable ? "Yes" : "No");
+    printf("  Source Power Data Objects:\n");
+
+    for (uint8_t i = 0; i < pdControl_g.source_caps.pdo_count; i++) {
+        const Source_PDO_t *pdo = &pdControl_g.source_caps.pdos[i];
+        printf("  PDO #%d [RAW:0x%08lx]: ", pdo->position, pdo->raw);
+
+        switch (pdo->type) {
+            case PDO_TYPE_FIXED_SUPPLY: {
+                printf("%s Fixed - %dmV, %dmA%s\n",
+                       pdo->fixed.voltage <= 20000 ? "SPR" : "EPR",
+                       pdo->fixed.voltage,
+                       pdo->fixed.current,
+                       pdo->fixed.epr_capable ? " (EPR Capable)" : "");
+                break;
+            }
+            default: {
+                // 不支持的 PDO 类型
+                printf("Unsupported Type\n");
+                break;
+            }
+        }
+    }
+    printf("\n");
+}
+
+/**
+ * @brief  获取 Source Capabilities
+ * @return Source Capabilities
+ */
+Source_PDO_Storage_t usbpd_sink_get_source_caps(void) {
+    return pdControl_g.source_caps;
+}
+
 /**
  * @brief  设置 PDO Position
  * @param  position PDO Position (1-based)
@@ -983,7 +965,7 @@ bool usbpd_sink_set_pdo_position(uint8_t position) {
     }
 
     // 检查指定位置的 PDO 是否有效
-    Source_PDO_t* pdo = NULL;
+    Source_PDO_t *pdo = NULL;
     for (uint8_t i = 0; i < pdControl_g.source_caps.pdo_count; i++) {
         if (pdControl_g.source_caps.pdos[i].position == position) {
             pdo = &pdControl_g.source_caps.pdos[i];
@@ -1003,13 +985,13 @@ bool usbpd_sink_set_pdo_position(uint8_t position) {
 
     pdControl_g.cc_PDO_Pos = position;
 
-    // 如果当前已经建立连接, 则发起新的请求
+    // 如果当前已经建立连接，则发起新的请求
     if (pdControl_g.cc_USBPD_READY) {
         if (pdControl_g.cc_EPR_Ready) {
-            // 在 EPR 模式下, 直接发送 EPR 请求
+            // 在 EPR 模式下，直接发送 EPR 请求
             pdControl_g.cc_State = CC_SEND_EPR_REQUEST;
         } else {
-            // 在 SPR 模式下, 直接发送 SPR 请求
+            // 在 SPR 模式下，直接发送 SPR 请求
             pdControl_g.cc_State = CC_SEND_SPR_REQUEST;
         }
     }

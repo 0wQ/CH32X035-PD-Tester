@@ -7,17 +7,13 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdint.h>
 
 /* get values from PDO representation */
-#define POWER_DECODE_50MV(value) ((uint16_t)(((value) * 50)))   /* From 50mV  multiples to mV */
+#define POWER_DECODE_50MV(value)  ((uint16_t)(((value) * 50)))  /* From 50mV  multiples to mV */
 #define POWER_DECODE_100MV(value) ((uint16_t)(((value) * 100))) /* From 100mV multiples to mV */
-#define POWER_DECODE_10MA(value) ((uint16_t)(((value) * 10)))   /* From 10mA  multiples to mA */
-#define POWER_DECODE_50MA(value) ((uint16_t)(((value) * 50)))   /* From 50mA  multiples to mA */
+#define POWER_DECODE_10MA(value)  ((uint16_t)(((value) * 10)))  /* From 10mA  multiples to mA */
+#define POWER_DECODE_50MA(value)  ((uint16_t)(((value) * 50)))  /* From 50mA  multiples to mA */
 #define POWER_DECODE_250MW(value) ((uint16_t)(((value) * 250))) /* From 250mW  multiples to mW */
 
 /* PD PHY Channel */
@@ -284,7 +280,3 @@ typedef union {
         uint32_t ObjectPosition : 4u;
     } AVSRequestDataObject;
 } USBPD_RequestDataObject_t;
-
-#ifdef __cplusplus
-}
-#endif
