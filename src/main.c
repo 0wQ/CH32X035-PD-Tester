@@ -1,14 +1,24 @@
-#include "adc.h"
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "ch32x035.h"
 #include "debug.h"
+
+#include "adc.h"
 #include "millis.h"
 #include "multi_button.h"
-#include "ui.h"
+#include "qc.h"
 #include "usbpd_sink.h"
+#include "ui.h"
 
-/* BUTTON */
-struct Button btn_left;
-struct Button btn_right;
-struct Button btn_down;
+// QC
+static bool is_using_qc_mode = false;
+static usb_qc_voltage_t qc_voltage = USB_QC_VOLTAGE_5V;
+
+// BUTTON
+static Button btn_left;
+static Button btn_right;
+static Button btn_down;
 
 enum Button_IDs {
     btn_left_id,
@@ -16,7 +26,7 @@ enum Button_IDs {
     btn_down_id,
 };
 
-uint8_t read_button_gpio(uint8_t button_id) {
+static uint8_t read_button_gpio(uint8_t button_id) {
     switch (button_id) {
         case btn_left_id:
             return GPIO_ReadInputDataBit(GPIOB, GPIO_Pin_1);
@@ -29,64 +39,82 @@ uint8_t read_button_gpio(uint8_t button_id) {
     }
 }
 
-void btn_left_callback(void *btn) {
-    Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
-    uint8_t current_pos = usbpd_sink_get_pdo_position();
+static void btn_left_callback(void *btn) {
+    printf("btn left\n");
 
-    // 找到当前 position 在数组中的索引
-    int8_t current_index = -1;
-    for (uint8_t i = 0; i < caps.pdo_count; i++) {
-        if (caps.pdos[i].position == current_pos) {
-            current_index = i;
-            break;
+    if (is_using_qc_mode) {
+        if (qc_voltage == USB_QC_VOLTAGE_5V) {
+            qc_voltage = USB_QC_VOLTAGE_20V;  // 循环到最高档
+        } else {
+            qc_voltage--;
         }
-    }
-
-    // 向左移动到前一个 PDO
-    if (current_index > 0) {
-        current_index--;
+        usb_qc_request(qc_voltage);
     } else {
-        current_index = caps.pdo_count - 1;  // 循环到最后一个
-    }
+        Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
+        uint8_t current_pos = usbpd_sink_get_pdo_position();
 
-    printf("btn left, position=%d\n", caps.pdos[current_index].position);
-    usbpd_sink_set_pdo_position(caps.pdos[current_index].position);
+        // 找到当前 position 在数组中的索引
+        int8_t current_index = -1;
+        for (uint8_t i = 0; i < caps.pdo_count; i++) {
+            if (caps.pdos[i].position == current_pos) {
+                current_index = i;
+                break;
+            }
+        }
+
+        // 向左移动到前一个 PDO
+        if (current_index > 0) {
+            current_index--;
+        } else {
+            current_index = caps.pdo_count - 1;  // 循环到最后一个
+        }
+
+        usbpd_sink_set_pdo_position(caps.pdos[current_index].position);
+    }
 }
 
-void btn_right_callback(void *btn) {
-    Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
-    uint8_t current_pos = usbpd_sink_get_pdo_position();
+static void btn_right_callback(void *btn) {
+    printf("btn right\n");
 
-    // 找到当前 position 在数组中的索引
-    int8_t current_index = -1;
-    for (uint8_t i = 0; i < caps.pdo_count; i++) {
-        if (caps.pdos[i].position == current_pos) {
-            current_index = i;
-            break;
+    if (is_using_qc_mode) {
+        qc_voltage++;
+        if (qc_voltage >= USB_QC_VOLTAGE_MAX) {
+            qc_voltage = USB_QC_VOLTAGE_5V;  // 循环到最低档
         }
-    }
-
-    // 向右移动到下一个 PDO
-    if (current_index < caps.pdo_count - 1) {
-        current_index++;
+        usb_qc_request(qc_voltage);
     } else {
-        current_index = 0;  // 循环到第一个
-    }
+        Source_PDO_Storage_t caps = usbpd_sink_get_source_caps();
+        uint8_t current_pos = usbpd_sink_get_pdo_position();
 
-    printf("btn right, position=%d\n", caps.pdos[current_index].position);
-    usbpd_sink_set_pdo_position(caps.pdos[current_index].position);
+        // 找到当前 position 在数组中的索引
+        int8_t current_index = -1;
+        for (uint8_t i = 0; i < caps.pdo_count; i++) {
+            if (caps.pdos[i].position == current_pos) {
+                current_index = i;
+                break;
+            }
+        }
+
+        // 向右移动到下一个 PDO
+        if (current_index < caps.pdo_count - 1) {
+            current_index++;
+        } else {
+            current_index = 0;  // 循环到第一个
+        }
+
+        usbpd_sink_set_pdo_position(caps.pdos[current_index].position);
+    }
 }
 
-void btn_down_callback(void *btn) {
-    printf("btn down, position=%d\n", usbpd_sink_get_pdo_position());
-    // 打印完整的 PDO 存储结构内容
-    // usbpd_sink_print_source_caps();
+static void btn_down_callback(void *btn) {
+    printf("btn down\n");
+
     static uint8_t rotation = 0;
     rotation = (rotation + 1) % 2;
     ui_set_rotation(rotation);
 }
 
-void _button_init(void) {
+static void _button_init(void) {
     GPIO_InitTypeDef GPIO_InitStructure = {0};
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_AFIO | RCC_APB2Periph_GPIOB, ENABLE);
     GPIO_InitStructure.GPIO_Pin = GPIO_Pin_1 | GPIO_Pin_3 | GPIO_Pin_11;
@@ -112,23 +140,39 @@ int main(void) {
     SystemCoreClockUpdate();
     Delay_Init();
     USART_Printf_Init(921600);
+    printf("\n\nusb pd test:\n");
 
     // 初始化计时器
     millis_init();
 
-    printf("\n\nusb pd test:\n");
+    // 初始化 ADC
+    adc_init();
+
+    // 初始化 UI
+    ui_init();
+    ui_update_vbus(adc_get_vbus_mv());
 
     // 初始化 Button
     _button_init();
 
-    // 初始化 UI
-    ui_init();
+    // 检测按钮是否已按下，切换 qc
+    if (read_button_gpio(btn_right_id) == 0) {
+        is_using_qc_mode = true;
+        usb_qc_request(qc_voltage);
 
-    // 初始化 ADC
-    adc_init();
+        // 等待按钮释放和 1.25s
+        uint32_t _millis = millis();
+        while (read_button_gpio(btn_right_id) == 0 || millis() - _millis <= 1250) {
+            ui_update_vbus(adc_get_vbus_mv());
+            ui_update_qc(qc_voltage);
+            Delay_Ms(50);
+        }
+    }
 
-    // 初始化 PD Sink
-    usbpd_sink_init();
+    if (!is_using_qc_mode) {
+        // 初始化 PD Sink
+        usbpd_sink_init();
+    }
 
     while (1) {
         static uint32_t last_btn_millis = 0;
@@ -140,8 +184,14 @@ int main(void) {
         static uint32_t last_ui_millis = 0;
         if (millis() - last_ui_millis >= 100) {
             last_ui_millis = millis();
+
             ui_update_vbus(adc_get_vbus_mv());
-            ui_update_pd_pos(usbpd_sink_get_pdo_position());
+
+            if (is_using_qc_mode) {
+                ui_update_qc(qc_voltage);
+            } else {
+                ui_update_pd_pos(usbpd_sink_get_pdo_position());
+            }
         }
     }
 }

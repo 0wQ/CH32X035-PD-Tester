@@ -1,8 +1,16 @@
-#include "u8g2.h"
+#pragma once
+
+#include <stdint.h>
+
 #include "u8g2_hal_ch32.h"
+#include "u8g2.h"
 #include "u8x8.h"
 
+#include "usbpd_sink.h"
+#include "qc.h"
+
 void ui_init(void);
+void ui_set_rotation(uint8_t rotation);
 void ui_update_vbus(uint16_t vbus_mv);
 void ui_update_pd_pos(uint8_t pos);
-void ui_set_rotation(uint8_t rotation);
+void ui_update_qc(usb_qc_voltage_t voltage);

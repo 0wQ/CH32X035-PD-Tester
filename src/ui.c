@@ -1,7 +1,5 @@
 #include "ui.h"
 
-#include "usbpd_sink.h"
-
 static u8g2_t u8g2;
 static const u8g2_cb_t *rotation = &u8g2_cb_r0;  // 默认旋转为 0
 
@@ -15,12 +13,25 @@ void ui_init(void) {
     u8g2_SetFont(&u8g2, u8g2_font_6x10_mf);
 
     u8g2_DrawStr(&u8g2, 0, 10, "VBUS");
-    u8g2_DrawStr(&u8g2, 28, 10, "00.00V");
+    u8g2_DrawStr(&u8g2, 28, 10, "--.--V");
     u8g2_DrawStr(&u8g2, 0, 25, " N <");
     u8g2_DrawStr(&u8g2, 28, 20, "--.--V");
     u8g2_DrawStr(&u8g2, 28, 30, "--.--A");
 
     u8g2_SendBuffer(&u8g2);
+}
+
+void ui_set_rotation(uint8_t r) {
+    switch (r) {
+        case 1:
+            rotation = &u8g2_cb_r2;
+            break;
+        case 0:
+        default:
+            rotation = &u8g2_cb_r0;
+            break;
+    }
+    ui_init();
 }
 
 void ui_update_vbus(uint16_t vbus_mv) {
@@ -58,15 +69,14 @@ void ui_update_pd_pos(uint8_t pos) {
     u8g2_SendBuffer(&u8g2);
 }
 
-void ui_set_rotation(uint8_t r) {
-    switch (r) {
-        case 1:
-            rotation = &u8g2_cb_r2;
-            break;
-        case 0:
-        default:
-            rotation = &u8g2_cb_r0;
-            break;
-    }
-    ui_init();
+void ui_update_qc(usb_qc_voltage_t voltage) {
+    uint8_t qc_voltage_list[] = {5, 9, 12, 20};
+
+    char buf[16];
+    u8g2_DrawStr(&u8g2, 0, 25, "QC2<");
+    snprintf(buf, sizeof(buf), "%05.2fV", (float)qc_voltage_list[voltage]);
+    u8g2_DrawStr(&u8g2, 28, 20, buf);
+    snprintf(buf, sizeof(buf), "--.--A");
+    u8g2_DrawStr(&u8g2, 28, 30, buf);
+    u8g2_SendBuffer(&u8g2);
 }
