@@ -1,5 +1,33 @@
 #include "u8g2_hal_ch32.h"
 
+#include "ch32x035.h"
+
+static void _i2c_init(uint32_t bound, uint16_t address) {
+    GPIO_InitTypeDef GPIO_InitStructure = {0};
+    I2C_InitTypeDef I2C_InitTSturcture = {0};
+
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC | RCC_APB2Periph_AFIO, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
+    GPIO_PinRemapConfig(GPIO_FullRemap_I2C1, ENABLE);
+    GPIO_PinRemapConfig(GPIO_Remap_SWJ_Disable, ENABLE);
+
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_18 | GPIO_Pin_19;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+    I2C_InitTSturcture.I2C_ClockSpeed = bound;
+    I2C_InitTSturcture.I2C_Mode = I2C_Mode_I2C;
+    I2C_InitTSturcture.I2C_DutyCycle = I2C_DutyCycle_2;
+    I2C_InitTSturcture.I2C_OwnAddress1 = address;
+    I2C_InitTSturcture.I2C_Ack = I2C_Ack_Enable;
+    I2C_InitTSturcture.I2C_AcknowledgedAddress = I2C_AcknowledgedAddress_7bit;
+    I2C_Init(I2C1, &I2C_InitTSturcture);
+
+    I2C_Cmd(I2C1, ENABLE);
+    I2C_AcknowledgeConfig(I2C1, ENABLE);
+}
+
 uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
     /* u8g2/u8x8 will never send more than 32 bytes between START_TRANSFER and END_TRANSFER */
     uint8_t *data = (uint8_t *)arg_ptr;
@@ -38,58 +66,6 @@ uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_p
     return 1;
 }
 
-// 提供给软件模拟 I2C 的 GPIO 输出和延时，使用之前编写的配置函数
 uint8_t u8x8_gpio_and_delay(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr) {
-    switch (msg) {
-        case U8X8_MSG_GPIO_AND_DELAY_INIT:  // called once during init phase of u8g2/u8x8
-            // Delay_Init();
-            break;  // can be used to setup pins
-
-        case U8X8_MSG_DELAY_100NANO:  // delay arg_int * 100 nano seconds
-            __NOP();
-            break;
-
-        case U8X8_MSG_DELAY_10MICRO:  // delay arg_int * 10 micro seconds
-            for (uint16_t n = 0; n < 320; n++) {
-                __NOP();
-            }
-            break;
-
-        case U8X8_MSG_DELAY_MILLI:  // delay arg_int * 1 milli second
-            Delay_Ms(1);
-            break;
-
-        case U8X8_MSG_DELAY_I2C:  // arg_int is the I2C speed in 100KHz, e.g. 4 = 400 KHz
-            Delay_Us(1);
-            break;  // arg_int=1: delay by 5us, arg_int = 4: delay by 1.25us
-
-        case U8X8_MSG_GPIO_I2C_CLOCK:  // arg_int=0: Output low at I2C clock pin
-                                       //            arg_int ? GPIO_SetBits(GPIOB, GPIO_Pin_6) : GPIO_ResetBits(GPIOB, GPIO_Pin_6);
-            break;                     // arg_int=1: Input dir with pullup high for I2C clock pin
-
-        case U8X8_MSG_GPIO_I2C_DATA:  // arg_int=0: Output low at I2C data pin
-                                      //            arg_int ? GPIO_SetBits(GPIOB, GPIO_Pin_7) : GPIO_ResetBits(GPIOB, GPIO_Pin_7);
-            break;                    // arg_int=1: Input dir with pullup high for I2C data pin
-
-        case U8X8_MSG_GPIO_MENU_SELECT:
-            u8x8_SetGPIOResult(u8x8, /* get menu select pin state */ 0);
-            break;
-
-        case U8X8_MSG_GPIO_MENU_NEXT:
-            u8x8_SetGPIOResult(u8x8, /* get menu next pin state */ 0);
-            break;
-
-        case U8X8_MSG_GPIO_MENU_PREV:
-            u8x8_SetGPIOResult(u8x8, /* get menu prev pin state */ 0);
-            break;
-
-        case U8X8_MSG_GPIO_MENU_HOME:
-            u8x8_SetGPIOResult(u8x8, /* get menu home pin state */ 0);
-            break;
-
-        default:
-            u8x8_SetGPIOResult(u8x8, 1);  // default return value
-            break;
-    }
     return 1;
 }
