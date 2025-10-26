@@ -18,6 +18,7 @@ typedef struct {
     power_mode_t power_mode;  // 当前电源模式
 
     char power_mode_name[4];  // 电源模式名称
+    char power_mode_desc[4];  // 电源模式描述
 
     uint8_t pd_position;          // PD PDO 位置 (1-based)
     bool is_epr_ready;            // PD 是否已进入 EPR 模式
@@ -28,6 +29,9 @@ typedef struct {
     uint16_t negotiate_epr_avs_pdp;  // epr avs pdp（w）
 
     uint16_t vbus_voltage;  // VBUS 电压
+
+    bool is_edit_mode;
+    uint16_t edit_voltage;
 } power_state_t;
 
 /**

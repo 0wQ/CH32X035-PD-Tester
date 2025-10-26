@@ -31,6 +31,17 @@ static void format_milli_value(char *buf, size_t buf_size, uint32_t milli_val, c
     }
 }
 
+void draw_inverted_str(int x, int y, const char *s) {
+    // uint8_t w = u8g2_GetStrWidth(&u8g2, s);
+    // uint8_t h = u8g2_GetMaxCharHeight(&u8g2);
+
+    u8g2_SetDrawColor(&u8g2, 0);
+    u8g2_DrawStr(&u8g2, x, y, s);
+    u8g2_SetDrawColor(&u8g2, 1);
+
+    // u8g2_DrawLine(&u8g2, (x - 1), (y - h + 2), (x - 1), (y + 1));
+}
+
 /**
  * @brief 初始化 U8G2 显示
  */
@@ -45,7 +56,7 @@ void app_ui_init(void) {
 
     // 绘制初始静态内容
     u8g2_DrawStr(&u8g2, 0, 10, "VBUS");
-    u8g2_DrawStr(&u8g2, 18, 25, "<");
+    u8g2_DrawStr(&u8g2, 20, 25, "<");
     ui_display_data_t ui_data = {0};
     app_ui_update(&ui_data);
     u8g2_SendBuffer(&u8g2);
@@ -92,10 +103,23 @@ void app_ui_update(const ui_display_data_t *ui_display_data) {
 
     // 更新协商电压
     format_milli_value(buf, sizeof(buf), ui_display_data->negotiate_voltage_mv, 'V');
-    u8g2_DrawStr(&u8g2, 28, 20, buf);
+    if (ui_display_data->is_edit_mode) {
+        draw_inverted_str(28, 20, buf);
+    } else {
+        u8g2_DrawStr(&u8g2, 28, 20, buf);
+    }
 
-    // 更新模式标识
-    u8g2_DrawStr(&u8g2, 0, 25, strlen(ui_display_data->mode_name) > 0 ? ui_display_data->mode_name : "N/A");
+    // 更新模式名称/描述
+    if (strlen(ui_display_data->mode_name) > 0) {
+        if (strlen(ui_display_data->mode_desc) > 0) {
+            u8g2_DrawStr(&u8g2, 0, 20, ui_display_data->mode_name);
+            u8g2_DrawStr(&u8g2, 0, 30, ui_display_data->mode_desc);
+        } else {
+            u8g2_DrawStr(&u8g2, 0, 25, ui_display_data->mode_name);
+        }
+    } else {
+        u8g2_DrawStr(&u8g2, 0, 25, "N/A");
+    }
 
     // 更新协商电流/功率
     if (ui_display_data->negotiate_epr_avs_pdp > 0) {

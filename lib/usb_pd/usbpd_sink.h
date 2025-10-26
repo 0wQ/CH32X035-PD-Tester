@@ -4,11 +4,29 @@
 #include <string.h>
 #include "usbpd_def.h"
 
-// 虚拟 E-Marker 是否启用
-// #define E_MARKER_ENABLE
+// 调试打印
+#define CONFIG_PD_DEBUG_ENABLE
 
-// EPR Mode 是否启用
-#define EPR_MODE_ENABLE
+// 虚拟 E-Marker
+// #define CONFIG_EMARKER_ENABLE
+
+// EPR Mode
+#define CONFIG_EPR_MODE_ENABLE
+
+// 硬件最高电压限制 (mV)
+#define CONFIG_HW_MAX_VOLTAGE (36000)  // TODO: 发送请求时 FPDO 已限制，其他类型 APDO 尚未实现限制，应该还需在更新 pd_available_pdos_t 时做限制
+
+// 不应小于 5V
+#if CONFIG_HW_MAX_VOLTAGE < 5000
+#undef CONFIG_HW_MAX_VOLTAGE
+#define CONFIG_HW_MAX_VOLTAGE 5000
+#endif
+
+#ifdef CONFIG_PD_DEBUG_ENABLE
+#define pd_printf(format, ...) LOG(format, ##__VA_ARGS__)
+#else
+#define pd_printf(x...)
+#endif
 
 // USB_PD_R3_2 V1.1 2024-10.pdf (Page 260, 6.6.21.2 SinkEPRKeepAlive Timer)
 // tSinkEPRKeepAlive (min:0.250s nom:0.375s max:0.500s)
@@ -42,8 +60,10 @@ typedef struct {
 
         // SPR AVS APDO
         struct {
-            uint16_t max_current_15v_20v;  // 最大电流 (mA)
-            uint16_t max_current_9v_15v;   // 最大电流 (mA)
+            uint16_t min_voltage;          // 最小电压 (mV)
+            uint16_t max_voltage;          // 最大电压 (mV)
+            uint16_t max_current_9v_15v;   // 9-15V 最大电流 (mA)
+            uint16_t max_current_15v_20v;  // 15-20V 最大电流 (mA)
         } spr_avs;
 
         // EPR AVS APDO
@@ -62,6 +82,7 @@ typedef struct {
 
 // PD 状态机
 // TODO: 按照 Table 8.154 Policy Engine States 规范命名 PE_SNK_XXX
+// TODO: 实现 wait 状态的超时退出
 typedef enum {
     PD_STATE_DISCONNECTED = 0,
     PD_STATE_CHECK_CONNECT,
@@ -96,6 +117,7 @@ typedef struct {
     volatile pd_state_t pd_state;                         // PD 状态机当前状态
     volatile pd_state_t pd_last_state;                    // PD 状态机之前状态
     volatile uint8_t pdo_pos;                             // 当前选择的 PDO Position
+    volatile uint16_t pdo_voltage_mv;                     // 当前选择的 PDO 电压 (mV)，用于传递 APDO 电压
     pd_available_pdos_t available_pdos;                   // 用于存储可用的 PDO 以供后续发送请求使用
     uint32_t spr_source_cap_buffer[7];                    // SPR Source Capability 缓冲区（SPR 最多 7 个 PDO）
     volatile uint8_t spr_source_cap_buffer_pdo_count;     // SPR Source Capability 缓冲区中的 PDO 数量
@@ -148,18 +170,27 @@ void usbpd_sink_debug_available_pdos(void);
 const pd_available_pdos_t *usbpd_sink_get_available_pdos(void);
 
 /**
- * @brief 设置 Position
- * @param position Position (1-based)
- * @return true 成功
- * @return false 失败
- */
-bool usbpd_sink_set_position(uint8_t position);
-
-/**
  * @brief 获取当前 Position
  * @return uint8_t Position (1-based), 如果未连接或无效则返回 0
  */
 uint8_t usbpd_sink_get_position(void);
+
+/**
+ * @brief 设置 Fixed Supply PDO Position
+ * @param position Position (1-based)
+ * @return true 成功
+ * @return false 失败
+ */
+bool usbpd_sink_set_fpdo_position(uint8_t position);
+
+/**
+ * @brief 设置 APDO Position 并指定电压
+ * @param position Position (1-based)
+ * @param voltage_mv 请求的电压 (mV)，必须在 PDO 的 min_voltage 和 max_voltage 范围内，且符合步进要求
+ * @return true 成功
+ * @return false 失败
+ */
+bool usbpd_sink_set_apdo_position_with_voltage(uint8_t position, uint16_t voltage_mv);
 
 /**
  * @brief 发送 HARD_RESET

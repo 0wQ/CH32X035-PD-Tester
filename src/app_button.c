@@ -17,10 +17,10 @@ static button_event_callback_t g_event_callback = NULL;
 
 // 按键参数和实例
 static const bits_btn_obj_param_t default_param = {
-    .long_press_period_triger_ms = 200,
-    .long_press_start_time_ms = 500,
-    .short_press_time_ms = BITS_BTN_SHORT_TIME_MS,
-    .time_window_time_ms = BITS_BTN_TIME_WINDOW_TIME_MS,
+    .long_press_period_triger_ms = 30,
+    .long_press_start_time_ms = 800,
+    .short_press_time_ms = 250,
+    .time_window_time_ms = 100,
 };
 
 static button_obj_t btns[] = {
@@ -53,6 +53,17 @@ static void bits_btn_result_cb(struct button_obj_t *btn, struct bits_btn_result 
 
     if (g_event_callback == NULL) return;
 
+    // 单击事件
+    if (result.event == BTN_STATE_FINISH) {
+        switch (result.key_id) {
+            case BTN_DOWN:
+                g_event_callback(BUTTON_EVENT_DOWN);
+                break;
+            default:
+                break;
+        }
+    }
+
     // 按下事件
     if (result.event == BTN_STATE_PRESSED) {
         switch (result.key_id) {
@@ -61,9 +72,6 @@ static void bits_btn_result_cb(struct button_obj_t *btn, struct bits_btn_result 
                 break;
             case BTN_RIGHT:
                 g_event_callback(BUTTON_EVENT_RIGHT);
-                break;
-            case BTN_DOWN:
-                g_event_callback(BUTTON_EVENT_DOWN);
                 break;
             default:
                 break;

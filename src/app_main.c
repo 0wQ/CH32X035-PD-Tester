@@ -15,7 +15,7 @@
  */
 static void button_event_handler(button_event_t event) {
     // 特殊处理：控制 UI 旋转
-    if (event == BUTTON_EVENT_DOWN_DOUBLE_CLICK) {
+    if (event == BUTTON_EVENT_DOWN_LONG) {
         app_ui_toggle_rotation();
     }
     // 将按键事件传递给 app_control 处理
@@ -57,8 +57,11 @@ int main(void) {
             ui_data.negotiate_voltage_mv = state.negotiate_voltage;
             ui_data.negotiate_current_ma = state.negotiate_current;
             ui_data.negotiate_epr_avs_pdp = state.negotiate_epr_avs_pdp;
+            ui_data.is_edit_mode = state.is_edit_mode;
             strncpy(ui_data.mode_name, state.power_mode_name, sizeof(ui_data.mode_name) - 1);
             ui_data.mode_name[sizeof(ui_data.mode_name) - 1] = '\0';
+            strncpy(ui_data.mode_desc, state.power_mode_desc, sizeof(ui_data.mode_desc) - 1);
+            ui_data.mode_desc[sizeof(ui_data.mode_desc) - 1] = '\0';
 
             // 更新 UI
             app_ui_update(&ui_data);

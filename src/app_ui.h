@@ -11,7 +11,9 @@ typedef struct {
     uint16_t negotiate_voltage_mv;   // 当前协商电压 (mV)
     uint16_t negotiate_current_ma;   // 当前协商电流 (mA)
     uint16_t negotiate_epr_avs_pdp;  // 当前协商功率 (W)
+    bool is_edit_mode;               // 是否处于编辑模式
     char mode_name[4];               // 模式名称 ("QC2", "EPR", "SPR")
+    char mode_desc[4];
 } ui_display_data_t;
 
 /**

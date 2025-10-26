@@ -406,3 +406,9 @@ typedef union {
     } AVS;
     // } AdjustableVoltageSupply;
 } USBPD_RDO_t;
+
+typedef enum {
+    USBPD_SPR_PPS_VOLTAGE_UNIT = 20,
+    USBPD_SPR_AVS_VOLTAGE_UNIT = 25,
+    USBPD_EPR_AVS_VOLTAGE_UNIT = 100,
+} USBPD_APDO_VOLTAGE_UNIT_t;
