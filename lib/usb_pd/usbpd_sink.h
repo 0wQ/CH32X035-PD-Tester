@@ -106,7 +106,7 @@ typedef enum {
     PD_STATE_SEND_REJECT,
 
     MIPPS_STATE_SEND_DRSWAP,
-    MIPPS_STATE_WAIT_DRSWAP_RESPONSE,
+    MIPPS_STATE_WAIT_DRSWAP_ACCEPT,  // set control_g.port_data_role = 1
 
     MIPPS_STATE_SEND_VDM_REQ_DISCOVER_IDENTITY,
     MIPPS_STATE_WAIT_VDM_ACK_DISCOVER_IDENTITY,  // 判断 USB Vendor ID, TODO: id 错误时，还需要再判断是否需要进入 EPR_MODE
@@ -167,6 +167,7 @@ typedef struct {
     volatile uint32_t epr_keepalive_timer;                // SinkEPRKeepAliveTimer 定时器，需在收到和回复 GoodCRC 后重置，超时 tSinkEPRKeepAlive 需发送 EPR Keep Alive
     volatile uint32_t pps_periodic_timer;                 // SinkPPSPeriodicTimer 定时器，需在收到和回复 GoodCRC 后重置，超时 tPPSRequest 需重新发送 SPR Request
 
+    uint8_t port_data_role;          // 0b UFP, 1b DFP
     bool mipps_is_drswap_requested;  // MIPPS 尚未发送 drswap
 } pd_control_t;
 
