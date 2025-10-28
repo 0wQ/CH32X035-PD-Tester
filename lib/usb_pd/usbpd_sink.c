@@ -715,13 +715,6 @@ static void usbpd_sink_state_process(void) {
         case PD_STATE_RECEIVED_PS_RDY: {
             pd_control_g.is_ready = true;
 
-            // MIPPS
-            if (!pd_control_g.mipps_is_drswap_requested) {
-                pd_control_g.mipps_is_drswap_requested = true;
-                pd_control_g.pd_state = MIPPS_STATE_SEND_DRSWAP;
-                break;
-            }
-
 #ifdef CONFIG_EPR_MODE_ENABLE
             // 如果未进入 EPR 模式，并且 source 和 cable 都支持 EPR, 则进入 EPR 模式
             if (!pd_control_g.is_epr_ready && pd_control_g.source_epr_capable && pd_control_g.cable_epr_capable) {
@@ -730,6 +723,13 @@ static void usbpd_sink_state_process(void) {
                 break;
             }
 #endif
+
+            // MIPPS, 如果支持 EPR, 优先 EPR_ENTER
+            if (!pd_control_g.mipps_is_drswap_requested) {
+                pd_control_g.mipps_is_drswap_requested = true;
+                pd_control_g.pd_state = MIPPS_STATE_SEND_DRSWAP;
+                break;
+            }
 
             pd_control_g.pd_state = PD_STATE_IDLE;
             // pd_control_g.pd_state = pd_control_g.is_epr_ready ? PD_STATE_SEND_EPR_REQUEST : PD_STATE_SEND_SPR_REQUEST;  // speedtest
