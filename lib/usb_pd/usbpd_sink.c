@@ -1139,23 +1139,18 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t 
                     if (vdm_header.StructuredVDMHeader.VDMType == 1) {  // 1 = Structured VDM
                         // MIPPS
                         if (vdm_header.StructuredVDMHeader.Command == 1 && vdm_header.StructuredVDMHeader.CommandType == 1) {  // ACK DISCOVER_IDENTITY
-                            // 判断 USB Vendor ID
-                            USBPD_IDHeaderVDO_t id_header_vdo = {0};
-                            id_header_vdo.d32 = *(uint32_t *)&rx_buffer[6];
-                            pd_printf("  ID Header VDO: 0x%08x\n", id_header_vdo.d32);
-                            pd_printf("  Vendor ID: 0x%04x\n", id_header_vdo.IDHeaderVDO.USBVendorID);
-                            if (id_header_vdo.IDHeaderVDO.USBVendorID == 0x2B01 ||  // ZMI
-                                id_header_vdo.IDHeaderVDO.USBVendorID == 0x2717) {  // XIAOMI
-                                pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS;
-                                break;
-                            }
-                            // 其他 USB Vendor ID，不支持 MIPPS
-                            pd_control_g.pd_state = PD_STATE_IDLE;
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS;
                             break;
                         }
                         if (vdm_header.StructuredVDMHeader.Command == 2 && vdm_header.StructuredVDMHeader.CommandType == 1) {  // ACK DISCOVER_SVIDS
-                            // TODO: 判断 SVID
-                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_1;
+                            // 判断 SVID
+                            uint16_t svid = *(uint16_t *)&rx_buffer[8];
+                            pd_printf("  SVID: 0x%04x\n", svid);
+                            if (svid == 0x2717) {
+                                pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_1;
+                                break;
+                            }
+                            pd_control_g.pd_state = PD_STATE_IDLE;
                             break;
                         }
                     } else {
