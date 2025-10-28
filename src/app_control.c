@@ -297,6 +297,7 @@ static void handle_down_button(void) {
                             switch (pdos_ptr->pdo[i].apdo_subtype) {
                                 case APDO_TYPE_SPR_PPS:
                                     request_voltage = pdos_ptr->pdo[i].pps.min_voltage;
+                                    request_voltage = request_voltage < 4500 ? 4500 : request_voltage;  // 防止电压过低
                                     break;
                                 case APDO_TYPE_EPR_AVS:
                                     request_voltage = pdos_ptr->pdo[i].epr_avs.min_voltage;
