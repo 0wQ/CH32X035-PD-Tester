@@ -46,17 +46,30 @@ static USBPD_CC_State_t usbpd_sink_check_cc_connect(void) {
 }
 
 static void usbpd_sink_rx_mode(void) {
-    // 清除全部状态
+    // 设置 CC 以正常 VDD 电压驱动输出
+    USBPD->PORT_CC1 &= ~CC_LVE;
+    USBPD->PORT_CC2 &= ~CC_LVE;
+
+    // 清除所有中断标志位
     USBPD->CONFIG |= PD_ALL_CLR;
     USBPD->CONFIG &= ~PD_ALL_CLR;
 
+    // 中断使能
+    USBPD->CONFIG |= IE_TX_END | IE_RX_ACT | IE_RX_RESET;
+    // PD 引脚输入滤波使能？
+    USBPD->CONFIG |= PD_FILT_ED;
+    // DMA 使能
+    USBPD->CONFIG |= PD_DMA_EN;
+
     // 设置为接收模式
-    USBPD->BMC_CLK_CNT = UPD_TMR_RX_48M;
-    USBPD->DMA = (uint32_t)usbpd_rx_buffer;
+    USBPD->BMC_CLK_CNT = UPD_TMR_RX_48M;     // BMC 接收采样时钟计数器
+    USBPD->DMA = (uint32_t)usbpd_rx_buffer;  // DMA Buffer
 
     // 开始接收
-    USBPD->CONTROL &= ~PD_TX_EN;
-    USBPD->CONTROL |= BMC_START;
+    USBPD->CONTROL &= ~PD_TX_EN;  // PD 接收使能
+    USBPD->CONTROL |= BMC_START;  // BMC 开始信号
+
+    NVIC_EnableIRQ(USBPD_IRQn);
 }
 
 static void usbpd_sink_state_reset(void) {
@@ -100,18 +113,26 @@ static void usbpd_sink_state_reset(void) {
     pd_control_g.pps_periodic_timer = 0;
 }
 
-static void usbpd_sink_phy_send_data(uint8_t *buffer, uint8_t length, uint8_t sop) {
+static void usbpd_sink_phy_send_data(const uint8_t *tx_buffer, uint8_t tx_length, uint8_t sop) {
     delay_us(90);  // 确保 GoodCRC 已发送
+
+    // 设置 CC 以低电压驱动输出
+    if ((USBPD->CONFIG & CC_SEL) == CC_SEL) {
+        USBPD->PORT_CC2 |= CC_LVE;
+    } else {
+        USBPD->PORT_CC1 |= CC_LVE;
+    }
 
     USBPD->BMC_CLK_CNT = UPD_TMR_TX_48M;
     USBPD->TX_SEL = sop;
-    USBPD->DMA = (uint32_t)buffer;
-    USBPD->BMC_TX_SZ = length;
+    USBPD->DMA = (uint32_t)tx_buffer;
+    USBPD->BMC_TX_SZ = tx_length;
 
     USBPD->STATUS |= IF_TX_END;
     USBPD->CONTROL |= PD_TX_EN;
     USBPD->CONTROL |= BMC_START;
 
+    // 等待发送完成
     while ((USBPD->STATUS & IF_TX_END) == 0);
     USBPD->STATUS |= IF_TX_END;
 
@@ -188,24 +209,14 @@ void usbpd_sink_init(void) {
 
     AFIO->CTLR |= USBPD_IN_HVT | USBPD_PHY_V33;
 
-    // 设置 CC 以正常 VDD 电压驱动输出
-    USBPD->PORT_CC1 &= ~CC_LVE;
-    USBPD->PORT_CC2 &= ~CC_LVE;
-
     // 清除全部状态
     USBPD->STATUS = BUF_ERR | IF_RX_BIT | IF_RX_BYTE | IF_RX_ACT | IF_RX_RESET | IF_TX_END;
-
-    // 开启发送完成中断、接收完成中断、接收复位中断
-    USBPD->CONFIG = IE_TX_END | IE_RX_ACT | IE_RX_RESET | PD_DMA_EN;
 
     // PD Sink
     USBPD->PORT_CC1 = CC_CMP_66 | CC_PD;
     USBPD->PORT_CC2 = CC_CMP_66 | CC_PD;
 
     usbpd_sink_rx_mode();
-
-    NVIC_SetPriority(USBPD_IRQn, 0);
-    NVIC_EnableIRQ(USBPD_IRQn);
 
     timer_init();
 }
@@ -536,7 +547,7 @@ bool usbpd_sink_set_position(uint8_t position) {
  * @param is_epr 是否是 EPR Capabilities Message
  * @note 解析 pdos 将可用的 pdo 存储到 pd_control_g.available_pdos 中
  */
-static void usbpd_sink_pdos_analyse(const uint32_t *pdos, const uint8_t pdo_count, const bool is_epr) {
+static void usbpd_sink_pdos_analyse(const uint32_t *pdos, uint8_t pdo_count, bool is_epr) {
     // EPR 能力消息中的功率数据对象应按以下顺序发送：
     // 1) 如 SPR 能力消息中所报告的 SPR (A)PDOs，EPR 能力消息的消息头中的数据对象数量字段应与 SPR 能力消息的消息头中的数据对象数量字段相同
     // 2) 如果 SPR 能力消息中包含的 PDOs 少于 7 个，则未使用的数据对象应填充为零
@@ -687,7 +698,6 @@ static void usbpd_sink_state_process(void) {
             // 确保进入此状态后只执行一次
             if (pd_control_g.pd_last_state != pd_control_g.pd_state) {
                 usbpd_sink_rx_mode();
-                NVIC_EnableIRQ(USBPD_IRQn);
             }
             break;
         }
@@ -704,6 +714,13 @@ static void usbpd_sink_state_process(void) {
         }
         case PD_STATE_RECEIVED_PS_RDY: {
             pd_control_g.is_ready = true;
+
+            // MIPPS
+            if (!pd_control_g.mipps_is_drswap_requested) {
+                pd_control_g.mipps_is_drswap_requested = true;
+                pd_control_g.pd_state = MIPPS_STATE_SEND_DRSWAP;
+                break;
+            }
 
 #ifdef CONFIG_EPR_MODE_ENABLE
             // 如果未进入 EPR 模式，并且 source 和 cable 都支持 EPR, 则进入 EPR 模式
@@ -779,38 +796,181 @@ static void usbpd_sink_state_process(void) {
             pd_control_g.pd_state = PD_STATE_IDLE;
             break;
         }
-        case PD_STATE_SEND_VDM_ACK_DISCOVER_IDENTITY: {
+        case MIPPS_STATE_SEND_DRSWAP: {
             USBPD_MessageHeader_t header = {0};
             header.MessageHeader.MessageID = pd_control_g.sink_message_id;
-            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.MessageType = USBPD_CONTROL_MSG_DR_SWAP;
             header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
-            header.MessageHeader.NumberOfDataObjects = 4;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = 0xFF00A041;
-            *(uint32_t *)&usbpd_tx_buffer[6] = 0x18002E99;
-            *(uint32_t *)&usbpd_tx_buffer[10] = 0x00000000;
-            *(uint32_t *)&usbpd_tx_buffer[14] = 0x00000000;
 
-            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4 * 4), UPD_SOP0);
-            pd_control_g.pd_state = PD_STATE_IDLE;
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, 2, UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_DRSWAP_RESPONSE;
             break;
         }
-        case PD_STATE_SEND_VDM_ACK_DISCOVER_SVIDS: {
+        case MIPPS_STATE_SEND_VDM_REQ_DISCOVER_IDENTITY: {
             USBPD_MessageHeader_t header = {0};
             header.MessageHeader.MessageID = pd_control_g.sink_message_id;
             header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
             header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
-            header.MessageHeader.NumberOfDataObjects = 4;
+            header.MessageHeader.NumberOfDataObjects = 1;
+
+            USBPD_StructuredVDMHeader_t vdm_header = {0};
+            vdm_header.StructuredVDMHeader.Command = 1;
+            vdm_header.StructuredVDMHeader.CommandType = 0;
+            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
+            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
+            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
+            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = 0xFF00A042;
-            *(uint32_t *)&usbpd_tx_buffer[6] = 0x00000000;
-            *(uint32_t *)&usbpd_tx_buffer[10] = 0x04C0C737;
-            *(uint32_t *)&usbpd_tx_buffer[14] = 0x00000000;
-            *(uint32_t *)&usbpd_tx_buffer[18] = 0x00000000;
+            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
 
-            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 5 * 4), UPD_SOP0);
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_ACK_DISCOVER_IDENTITY;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 1;
+
+            USBPD_StructuredVDMHeader_t vdm_header = {0};
+            vdm_header.StructuredVDMHeader.Command = 2;
+            vdm_header.StructuredVDMHeader.CommandType = 0;
+            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
+            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
+            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
+            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_ACK_DISCOVER_SVIDS;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_1: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 1;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170101;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_1;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_2: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 1;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170102;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_2;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_3: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 1;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170103;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_3;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_4: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 5;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170104;
+            *(uint32_t *)&usbpd_tx_buffer[6] = 0xD6E97705;
+            *(uint32_t *)&usbpd_tx_buffer[10] = 0x06C7F5F4;
+            *(uint32_t *)&usbpd_tx_buffer[14] = 0xDF7A4000;
+            *(uint32_t *)&usbpd_tx_buffer[18] = 0x8C7467B8;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4 * 5), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_4;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_5: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 5;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170105;
+            *(uint32_t *)&usbpd_tx_buffer[6] = 0x464E9E0C;
+            *(uint32_t *)&usbpd_tx_buffer[10] = 0xEE13382B;
+            *(uint32_t *)&usbpd_tx_buffer[14] = 0x4124E2DA;
+            *(uint32_t *)&usbpd_tx_buffer[18] = 0x43DDF86F;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4 * 5), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_5;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_6: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 2;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170106;
+            *(uint32_t *)&usbpd_tx_buffer[6] = 0x00000001;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4 * 2), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_6;
+            break;
+        }
+        case MIPPS_STATE_SEND_VDM_7: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_DATA_MSG_VENDOR_DEFINED;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+            header.MessageHeader.NumberOfDataObjects = 2;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+            *(uint32_t *)&usbpd_tx_buffer[2] = 0x27170107;
+            *(uint32_t *)&usbpd_tx_buffer[6] = 0x00000001;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4 * 2), UPD_SOP0);
+            pd_control_g.pd_state = MIPPS_STATE_WAIT_VDM_7;
+            break;
+        }
+        case MIPPS_STATE_SEND_GET_SRC_CAP: {
+            USBPD_MessageHeader_t header = {0};
+            header.MessageHeader.MessageID = pd_control_g.sink_message_id;
+            header.MessageHeader.MessageType = USBPD_CONTROL_MSG_GET_SRC_CAP;
+            header.MessageHeader.SpecificationRevision = pd_control_g.pd_version;
+
+            *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
+
+            usbpd_sink_phy_send_data(usbpd_tx_buffer, 2, UPD_SOP0);
             pd_control_g.pd_state = PD_STATE_IDLE;
             break;
         }
@@ -826,7 +986,7 @@ static void usbpd_sink_state_process(void) {
  * @brief 解析 PD SOP0 数据包，并回复 GoodCRC
  * @note 需在 USBPD_IRQHandler 中调用
  */
-static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, const uint8_t rx_length) {
+static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t rx_length) {
     // Header
     USBPD_MessageHeader_t header = {0};
     header.d16 = *(uint16_t *)rx_buffer;
@@ -854,6 +1014,13 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, const ui
                     break;
                 }
                 case USBPD_CONTROL_MSG_ACCEPT: {
+                    // MIPPS
+                    if (pd_control_g.pd_state == MIPPS_STATE_WAIT_DRSWAP_RESPONSE) {
+                        pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_IDENTITY;
+                        break;
+                    }
+
+                    // TODO: 这里要判断上一状态才能 PD_STATE_WAIT_PS_RDY
                     pd_control_g.pd_state = PD_STATE_WAIT_PS_RDY;
                     break;
                 }
@@ -866,13 +1033,15 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, const ui
                     break;
                 }
                 case USBPD_CONTROL_MSG_NOT_SUPPORTED: {
-                    pd_control_g.pd_state = PD_STATE_IDLE;
                     // 在发送 EPR MODE Enter 后，如果收到 NOT_SUPPORTED 回复，则认为不支持 EPR
                     if (pd_control_g.pd_state == PD_STATE_WAIT_EPR_ENTER_RESPONSE) {
                         pd_control_g.cable_epr_capable = 0;
                         pd_control_g.source_epr_capable = 0;
                         pd_control_g.pd_state = PD_STATE_IDLE;
+                        break;
                     }
+
+                    pd_control_g.pd_state = PD_STATE_IDLE;
                     break;
                 }
                 case USBPD_CONTROL_MSG_GET_SNK_CAP:           // 待实现
@@ -951,21 +1120,61 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, const ui
                     pd_printf("  Command Type: %d\n", vdm_header.StructuredVDMHeader.CommandType);
                     pd_printf("  Command: %d\n", vdm_header.StructuredVDMHeader.Command);
 
-                    if (vdm_header.StructuredVDMHeader.VDMType == 1) {             // 1 = Structured VDM
-                        if (vdm_header.StructuredVDMHeader.CommandType == 0b00) {  // 00b = REQ
-                            switch (vdm_header.StructuredVDMHeader.Command) {
-                                case 1:  //  Discover Identity
-                                    pd_control_g.pd_state = PD_STATE_SEND_VDM_ACK_DISCOVER_IDENTITY;
-                                    break;
-                                case 2:  // Discover SVIDs
-                                    pd_control_g.pd_state = PD_STATE_SEND_VDM_ACK_DISCOVER_SVIDS;
-                                    break;
-                                default:  // 其他命令类型回复不支持
-                                    pd_control_g.pd_state = PD_STATE_SEND_NOT_SUPPORTED;
-                                    break;
+                    if (vdm_header.StructuredVDMHeader.VDMType == 1) {  // 1 = Structured VDM
+                        // MIPPS
+                        if (vdm_header.StructuredVDMHeader.Command == 1 && vdm_header.StructuredVDMHeader.CommandType == 1) {  // ACK DISCOVER_IDENTITY
+                            // 判断 USB Vendor ID
+                            USBPD_IDHeaderVDO_t id_header_vdo = {0};
+                            id_header_vdo.d32 = *(uint32_t *)&rx_buffer[6];
+                            pd_printf("  ID Header VDO: 0x%08x\n", id_header_vdo.d32);
+                            pd_printf("  Vendor ID: 0x%04x\n", id_header_vdo.IDHeaderVDO.USBVendorID);
+                            if (id_header_vdo.IDHeaderVDO.USBVendorID == 0x2B01 ||  // ZMI
+                                id_header_vdo.IDHeaderVDO.USBVendorID == 0x2717) {  // XIAOMI
+                                pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS;
+                                break;
                             }
+                            // 其他 USB Vendor ID，不支持 MIPPS
+                            pd_control_g.pd_state = PD_STATE_IDLE;
+                            break;
+                        }
+                        if (vdm_header.StructuredVDMHeader.Command == 2 && vdm_header.StructuredVDMHeader.CommandType == 1) {  // ACK DISCOVER_SVIDS
+                            // TODO: 判断 SVID
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_1;
+                            break;
+                        }
+                    } else {
+                        // MIPPS
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_1) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_2;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_2) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_3;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_3) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_4;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_4) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_5;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_5) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_6;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_6) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_7;
+                            break;
+                        }
+                        if (pd_control_g.pd_state == MIPPS_STATE_WAIT_VDM_7) {
+                            pd_control_g.pd_state = MIPPS_STATE_SEND_GET_SRC_CAP;
+                            break;
                         }
                     }
+
+                    pd_control_g.pd_state = PD_STATE_SEND_NOT_SUPPORTED;
                     break;
                 }
                 default: {
@@ -1037,7 +1246,7 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, const ui
  * @brief 解析 PD SOP1 数据包，并回复 GoodCRC
  * @note 需在 USBPD_IRQHandler 中调用
  */
-static void usbpd_sink_protocol_analysis_sop1(const uint8_t *rx_buffer, const uint8_t rx_length) {
+static void usbpd_sink_protocol_analysis_sop1(const uint8_t *rx_buffer, uint8_t rx_length) {
 #ifdef CONFIG_EMARKER_ENABLE
     // Header
     USBPD_MessageHeader_t header = {0};

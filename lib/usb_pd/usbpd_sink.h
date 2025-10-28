@@ -105,8 +105,37 @@ typedef enum {
     PD_STATE_SEND_NOT_SUPPORTED,
     PD_STATE_SEND_REJECT,
 
-    PD_STATE_SEND_VDM_ACK_DISCOVER_IDENTITY,
-    PD_STATE_SEND_VDM_ACK_DISCOVER_SVIDS,
+    MIPPS_STATE_SEND_DRSWAP,
+    MIPPS_STATE_WAIT_DRSWAP_RESPONSE,
+
+    MIPPS_STATE_SEND_VDM_REQ_DISCOVER_IDENTITY,
+    MIPPS_STATE_WAIT_VDM_ACK_DISCOVER_IDENTITY,  // 判断 USB Vendor ID, TODO: id 错误时，还需要再判断是否需要进入 EPR_MODE
+
+    MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS,
+    MIPPS_STATE_WAIT_VDM_ACK_DISCOVER_SVIDS,  // TODO: 判断 SVID 0x2717 ?
+
+    MIPPS_STATE_SEND_VDM_1,  // 0x27170101
+    MIPPS_STATE_WAIT_VDM_1,
+
+    MIPPS_STATE_SEND_VDM_2,  // 0x27170102
+    MIPPS_STATE_WAIT_VDM_2,
+
+    MIPPS_STATE_SEND_VDM_3,  // 0x27170103
+    MIPPS_STATE_WAIT_VDM_3,
+
+    MIPPS_STATE_SEND_VDM_4,  // 0x27170104 0xD6E97705 0x06C7F5F4 0xDF7A4000 0x8C7467B8
+    MIPPS_STATE_WAIT_VDM_4,
+
+    MIPPS_STATE_SEND_VDM_5,  // 0x27170105 0x464E9E0C 0xEE13382B 0x4124E2DA 0x43DDF86F
+    MIPPS_STATE_WAIT_VDM_5,
+
+    MIPPS_STATE_SEND_VDM_6,  // 0x27170106 0x00000001
+    MIPPS_STATE_WAIT_VDM_6,
+
+    MIPPS_STATE_SEND_VDM_7,  // 0x27170107 0x00000001
+    MIPPS_STATE_WAIT_VDM_7,  // TODO: 可能需要 drswap 回来再发 get_src_cap
+
+    MIPPS_STATE_SEND_GET_SRC_CAP,
 
     PD_STATE_IDLE,
 } pd_state_t;
@@ -137,6 +166,8 @@ typedef struct {
     volatile bool cable_epr_capable;                      // Cable 是否支持 EPR
     volatile uint32_t epr_keepalive_timer;                // SinkEPRKeepAliveTimer 定时器，需在收到和回复 GoodCRC 后重置，超时 tSinkEPRKeepAlive 需发送 EPR Keep Alive
     volatile uint32_t pps_periodic_timer;                 // SinkPPSPeriodicTimer 定时器，需在收到和回复 GoodCRC 后重置，超时 tPPSRequest 需重新发送 SPR Request
+
+    bool mipps_is_drswap_requested;  // MIPPS 尚未发送 drswap
 } pd_control_t;
 
 /******************************************************************************

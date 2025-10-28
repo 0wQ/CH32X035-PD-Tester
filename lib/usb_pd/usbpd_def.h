@@ -164,6 +164,36 @@ typedef union {
     } PassiveCableVDO;
 } USBPD_PassiveCableVDO_t;
 
+// Table 6.33 ID Header VDO
+typedef union {
+    uint32_t d32;
+
+    struct {
+        uint32_t USBVendorID    : 16u;    // B15…0  USB Vendor ID
+        uint32_t Reserved_20_16 : 5u;     // B20…16 保留，Shall Not be used
+        uint32_t ConnectorType  : 2u;     // B22…21 连接器类型
+                                          // 00b = Reserved
+                                          // 01b = Reserved, Shall Not be used
+                                          // 10b = USB Type-C Receptacle
+                                          // 11b = USB Type-C Plug
+        uint32_t SOPProductTypeDFP : 3u;  // B25…23 DFP 产品类型
+                                          // 000b = Not a DFP
+                                          // 001b = PDUSB Hub
+                                          // 010b = PDUSB Host
+                                          // 011b = Power Brick
+                                          // 100b–111b = Reserved, Shall Not be used
+        uint32_t ModalOperation    : 1u;  // B26 是否支持 Modal Operation (Alternate Modes)
+        uint32_t SOPProductTypeUFP : 3u;  // B29…27 UFP 产品类型
+                                          // 000b = Not a UFP
+                                          // 001b = PDUSB Hub
+                                          // 010b = PDUSB Peripheral
+                                          // 011b = PSD
+                                          // 100b–111b = Reserved, Shall Not be used
+        uint32_t USBDeviceCapable : 1u;   // B30 是否具备 USB Device 枚举能力
+        uint32_t USBHostCapable   : 1u;   // B31 是否具备 USB Host 枚举能力
+    } IDHeaderVDO;
+} USBPD_IDHeaderVDO_t;
+
 // 6.4.1.1 Power Data Objects
 
 // Table 6.7 Power Data Object (B31-B30)
