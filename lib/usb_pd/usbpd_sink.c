@@ -1,6 +1,7 @@
 #include "usbpd_sink.h"
 #include "usbpd_def.h"
 #include "usbpd_rdo.h"
+#include "usbpd_vdm.h"
 #include <stdint.h>
 #include "ch32x035.h"
 #include "utils_print.h"
@@ -862,17 +863,8 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.PortDataRole = pd_control_g.port_data_role;
             header.MessageHeader.NumberOfDataObjects = 1;
 
-            USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_IDENTITY;
-            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_REQ;
-            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
-            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
-
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
+            *(uint32_t *)&usbpd_tx_buffer[2] = usbpd_vdm_pack_structured_header(USBPD_SID_USBIF, 0, 0, 0, VDM_COMMAND_TYPE_REQ, VDM_COMMAND_DISCOVER_IDENTITY);
 
             usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
             pd_control_g.pd_state = PD_STATE_IDLE;
@@ -886,17 +878,8 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.PortDataRole = pd_control_g.port_data_role;
             header.MessageHeader.NumberOfDataObjects = 1;
 
-            USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_SVIDS;
-            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_REQ;
-            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
-            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
-
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
+            *(uint32_t *)&usbpd_tx_buffer[2] = usbpd_vdm_pack_structured_header(USBPD_SID_USBIF, 0, 0, 0, VDM_COMMAND_TYPE_REQ, VDM_COMMAND_DISCOVER_SVIDS);
 
             usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
             pd_control_g.pd_state = PD_STATE_IDLE;
@@ -1043,17 +1026,8 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.PortDataRole = pd_control_g.port_data_role;
             header.MessageHeader.NumberOfDataObjects = 1;
 
-            USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_IDENTITY;
-            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_NAK;
-            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
-            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
-
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
+            *(uint32_t *)&usbpd_tx_buffer[2] = usbpd_vdm_pack_structured_header(USBPD_SID_USBIF, 0, 0, 0, VDM_COMMAND_TYPE_NAK, VDM_COMMAND_DISCOVER_IDENTITY);
 
             usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
             pd_control_g.pd_state = PD_STATE_IDLE;
@@ -1067,17 +1041,8 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.PortDataRole = pd_control_g.port_data_role;
             header.MessageHeader.NumberOfDataObjects = 1;
 
-            USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_SVIDS;
-            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_NAK;
-            vdm_header.StructuredVDMHeader.ObjectPosition = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
-            vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
-            vdm_header.StructuredVDMHeader.SVID = 0xFF00;
-
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
-            *(uint32_t *)&usbpd_tx_buffer[2] = vdm_header.d32;
+            *(uint32_t *)&usbpd_tx_buffer[2] = usbpd_vdm_pack_structured_header(USBPD_SID_USBIF, 0, 0, 0, VDM_COMMAND_TYPE_NAK, VDM_COMMAND_DISCOVER_SVIDS);
 
             usbpd_sink_phy_send_data(usbpd_tx_buffer, (2 + 4), UPD_SOP0);
             pd_control_g.pd_state = PD_STATE_IDLE;
@@ -1252,61 +1217,41 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t 
                     break;
                 }
                 case USBPD_DATA_MSG_VENDOR_DEFINED: {
-                    USBPD_StructuredVDMHeader_t vdm_header = {0};
-                    vdm_header.d32 = *(uint32_t *)&rx_buffer[2];
+                    usbpd_vdm_header_info_t vdm_header = {0};
+                    usbpd_vdm_unpack_header(*(uint32_t *)&rx_buffer[2], &vdm_header);
 
                     pd_printf("SOP0 VDM:\n");
-                    pd_printf("  Header: 0x%08x\n", vdm_header.d32);
-                    pd_printf("  SVID: 0x%04x\n", vdm_header.StructuredVDMHeader.SVID);
-                    pd_printf("  VDMType: %d\n", vdm_header.StructuredVDMHeader.VDMType);
-                    pd_printf("  Version: %d %d\n", vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor, vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor);
-                    pd_printf("  ObjectPosition: %d\n", vdm_header.StructuredVDMHeader.ObjectPosition);
-                    pd_printf("  CommandType: %d\n", vdm_header.StructuredVDMHeader.CommandType);
-                    pd_printf("  Command: %d\n", vdm_header.StructuredVDMHeader.Command);
+                    pd_printf("  Header: 0x%08x\n", *(uint32_t *)&rx_buffer[2]);
+                    pd_printf("  SVID: 0x%04x\n", vdm_header.svid);
+                    pd_printf("  VDMType: %d\n", vdm_header.vdm_type);
+                    pd_printf("  Version: %d %d\n", vdm_header.version_major, vdm_header.version_minor);
+                    pd_printf("  ObjectPosition: %d\n", vdm_header.object_position);
+                    pd_printf("  CommandType: %d\n", vdm_header.command_type);
+                    pd_printf("  Command: %d\n", vdm_header.command);
 
                     // Structured VDM
-                    if (vdm_header.StructuredVDMHeader.VDMType == VDM_TYPE_STRUCTURED) {
+                    if (vdm_header.vdm_type == VDM_TYPE_STRUCTURED) {
                         // REQ
-                        if (vdm_header.StructuredVDMHeader.CommandType == VDM_COMMAND_TYPE_REQ) {
-                            if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_IDENTITY) {
+                        if (vdm_header.command_type == VDM_COMMAND_TYPE_REQ) {
+                            if (vdm_header.command == VDM_COMMAND_DISCOVER_IDENTITY) {
                                 pd_control_g.pd_state = PD_STATE_SEND_VDM_NAK_DISCOVER_IDENTITY;
                                 break;
                             }
-                            if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_SVIDS) {
+                            if (vdm_header.command == VDM_COMMAND_DISCOVER_SVIDS) {
                                 pd_control_g.pd_state = PD_STATE_SEND_VDM_NAK_DISCOVER_SVIDS;
                                 break;
                             }
                         }
                         // ACK
-                        if (vdm_header.StructuredVDMHeader.CommandType == VDM_COMMAND_TYPE_ACK) {
-                            if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_IDENTITY) {
+                        if (vdm_header.command_type == VDM_COMMAND_TYPE_ACK) {
+                            if (vdm_header.command == VDM_COMMAND_DISCOVER_IDENTITY) {
                                 // Discover Identity ACK does not carry SVID list.
                                 pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS;
                                 break;
                             }
 
-                            if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_SVIDS) {
-                                uint8_t vdo_count = header.MessageHeader.NumberOfDataObjects > 0u
-                                                        ? (uint8_t)(header.MessageHeader.NumberOfDataObjects - 1u)
-                                                        : 0u;
-                                bool usb_vid_found = false;
-
-                                for (uint8_t i = 0; i < vdo_count; i++) {
-                                    uint32_t vdo = *(uint32_t *)&rx_buffer[6 + (i * 4)];
-                                    uint16_t id0 = (uint16_t)(vdo & 0xFFFFu);
-                                    uint16_t id1 = (uint16_t)((vdo >> 16) & 0xFFFFu);
-
-                                    if (id0 == USBPD_MIPPS_XIAOMI_USB_VID || id1 == USBPD_MIPPS_XIAOMI_USB_VID) {
-                                        usb_vid_found = true;
-                                        break;
-                                    }
-
-                                    if (id0 == 0u && id1 == 0u) {
-                                        break;
-                                    }
-                                }
-
-                                if (!usb_vid_found) {
+                            if (vdm_header.command == VDM_COMMAND_DISCOVER_SVIDS) {
+                                if (!usbpd_vdm_discover_svids_contains(rx_buffer, header.MessageHeader.NumberOfDataObjects, USBPD_MIPPS_XIAOMI_USB_VID)) {
                                     pd_printf("MIPPS: USB Vendor ID 0x%04x not found, jumping to GET_SRC_CAP\n", USBPD_MIPPS_XIAOMI_USB_VID);
                                     pd_control_g.pd_state = MIPPS_STATE_SEND_GET_SRC_CAP;
                                     break;
@@ -1317,14 +1262,14 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t 
                             }
                         }
                         // NAK
-                        if (vdm_header.StructuredVDMHeader.CommandType == VDM_COMMAND_TYPE_NAK) {
+                        if (vdm_header.command_type == VDM_COMMAND_TYPE_NAK) {
                             pd_control_g.pd_state = PD_STATE_IDLE;
                             break;
                         }
                     }
 
                     // Unstructured VDM
-                    if (vdm_header.StructuredVDMHeader.VDMType == VDM_TYPE_UNSTRUCTURED) {
+                    if (vdm_header.vdm_type == VDM_TYPE_UNSTRUCTURED) {
                         // MIPPS
                         if (IS_MIPPS_UVDM_WAIT_STATE(pd_control_g.pd_state)) {
                             pd_control_g.pd_state++;
@@ -1477,7 +1422,12 @@ static void usbpd_sink_protocol_analysis_sop1(const uint8_t *rx_buffer, uint8_t 
                                 // *(uint32_t *)&usbpd_tx_buffer[18] = 0x000A0640;
 
                                 // 联想 C135 E-Marker
-                                *(uint32_t *)&usbpd_tx_buffer[2] = 0xFF00A041;   // VDM Header
+                                *(uint32_t *)&usbpd_tx_buffer[2] = usbpd_vdm_pack_structured_header(USBPD_SID_USBIF,
+                                                                                                      1,
+                                                                                                      0,
+                                                                                                      0,
+                                                                                                      VDM_COMMAND_TYPE_ACK,
+                                                                                                      VDM_COMMAND_DISCOVER_IDENTITY);  // VDM Header
                                 *(uint32_t *)&usbpd_tx_buffer[6] = 0x180017EF;   // ID Header VDO
                                 *(uint32_t *)&usbpd_tx_buffer[10] = 0x00000000;  // Cert Stat VDO
                                 *(uint32_t *)&usbpd_tx_buffer[14] = 0xA4AA0000;  // Product VDO
