@@ -1,7 +1,6 @@
 #include "usbpd_sink.h"
 #include "usbpd_def.h"
 #include "usbpd_rdo.h"
-
 #include <stdint.h>
 #include "ch32x035.h"
 #include "utils_print.h"
@@ -864,12 +863,12 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.NumberOfDataObjects = 1;
 
             USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = 1;
-            vdm_header.StructuredVDMHeader.CommandType = 0;
+            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_IDENTITY;
+            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_REQ;
             vdm_header.StructuredVDMHeader.ObjectPosition = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
             vdm_header.StructuredVDMHeader.SVID = 0xFF00;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
@@ -888,12 +887,12 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.NumberOfDataObjects = 1;
 
             USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = 2;
-            vdm_header.StructuredVDMHeader.CommandType = 0;
+            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_SVIDS;
+            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_REQ;
             vdm_header.StructuredVDMHeader.ObjectPosition = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
             vdm_header.StructuredVDMHeader.SVID = 0xFF00;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
@@ -1045,12 +1044,12 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.NumberOfDataObjects = 1;
 
             USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = 1;         // Discover Identity
-            vdm_header.StructuredVDMHeader.CommandType = 0b10;  // NAK
+            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_IDENTITY;
+            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_NAK;
             vdm_header.StructuredVDMHeader.ObjectPosition = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
             vdm_header.StructuredVDMHeader.SVID = 0xFF00;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
@@ -1069,12 +1068,12 @@ static void usbpd_sink_state_process(void) {
             header.MessageHeader.NumberOfDataObjects = 1;
 
             USBPD_StructuredVDMHeader_t vdm_header = {0};
-            vdm_header.StructuredVDMHeader.Command = 2;         // Discover SVIDs
-            vdm_header.StructuredVDMHeader.CommandType = 0b10;  // NAK
+            vdm_header.StructuredVDMHeader.Command = VDM_COMMAND_DISCOVER_SVIDS;
+            vdm_header.StructuredVDMHeader.CommandType = VDM_COMMAND_TYPE_NAK;
             vdm_header.StructuredVDMHeader.ObjectPosition = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMinor = 0;
             vdm_header.StructuredVDMHeader.StructuredVDMVersionMajor = 0;
-            vdm_header.StructuredVDMHeader.VDMType = 1;
+            vdm_header.StructuredVDMHeader.VDMType = VDM_TYPE_STRUCTURED;
             vdm_header.StructuredVDMHeader.SVID = 0xFF00;
 
             *(uint16_t *)&usbpd_tx_buffer[0] = header.d16;
@@ -1287,25 +1286,28 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t 
                             }
 
                             if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_SVIDS) {
-                                // Parse SVIDs from VDO list (each VDO has two 16-bit SVIDs).
-                                uint8_t vdo_count = header.MessageHeader.NumberOfDataObjects > 0
-                                                        ? (uint8_t)(header.MessageHeader.NumberOfDataObjects - 1)
-                                                        : 0;
-                                bool svid_found = false;
+                                uint8_t vdo_count = header.MessageHeader.NumberOfDataObjects > 0u
+                                                        ? (uint8_t)(header.MessageHeader.NumberOfDataObjects - 1u)
+                                                        : 0u;
+                                bool usb_vid_found = false;
 
                                 for (uint8_t i = 0; i < vdo_count; i++) {
                                     uint32_t vdo = *(uint32_t *)&rx_buffer[6 + (i * 4)];
-                                    uint16_t svid0 = (uint16_t)(vdo & 0xFFFFu);
-                                    uint16_t svid1 = (uint16_t)((vdo >> 16) & 0xFFFFu);
-                                    pd_printf("  SVID[%d]: 0x%04x 0x%04x\n", i, svid0, svid1);
+                                    uint16_t id0 = (uint16_t)(vdo & 0xFFFFu);
+                                    uint16_t id1 = (uint16_t)((vdo >> 16) & 0xFFFFu);
 
-                                    if (svid0 == 0x2717 || svid1 == 0x2717) {
-                                        svid_found = true;
+                                    if (id0 == USBPD_MIPPS_XIAOMI_USB_VID || id1 == USBPD_MIPPS_XIAOMI_USB_VID) {
+                                        usb_vid_found = true;
+                                        break;
+                                    }
+
+                                    if (id0 == 0u && id1 == 0u) {
+                                        break;
                                     }
                                 }
 
-                                if (!svid_found) {
-                                    pd_printf("MIPPS: SVID 0x2717 not found, jumping to IDLE state\n");
+                                if (!usb_vid_found) {
+                                    pd_printf("MIPPS: USB Vendor ID 0x%04x not found, jumping to GET_SRC_CAP\n", USBPD_MIPPS_XIAOMI_USB_VID);
                                     pd_control_g.pd_state = MIPPS_STATE_SEND_GET_SRC_CAP;
                                     break;
                                 }

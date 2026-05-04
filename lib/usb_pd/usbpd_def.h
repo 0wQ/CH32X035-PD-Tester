@@ -9,6 +9,8 @@
 /* Maximum length of USB PD data */
 #define USBPD_DATA_MAX_LEN 34
 
+#define USBPD_MIPPS_XIAOMI_USB_VID 0x2717u
+
 /* get values from PDO representation */
 #define POWER_DECODE_50MV(value)  ((uint16_t)(((value) * 50)))   // From 50mV  multiples to mV
 #define POWER_DECODE_100MV(value) ((uint16_t)(((value) * 100)))  // From 100mV multiples to mV
