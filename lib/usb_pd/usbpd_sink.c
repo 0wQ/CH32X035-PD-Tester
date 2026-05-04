@@ -1280,21 +1280,36 @@ static void usbpd_sink_protocol_analysis_sop0(const uint8_t *rx_buffer, uint8_t 
                         }
                         // ACK
                         if (vdm_header.StructuredVDMHeader.CommandType == VDM_COMMAND_TYPE_ACK) {
-                            // 判断 SVID
-                            uint16_t svid = *(uint16_t *)&rx_buffer[8];
-                            pd_printf("  SVID: 0x%04x\n", svid);
-                            if (svid != 0x2717) {
-                                pd_printf("MIPPS: Unknown SVID 0x%04x, jumping to IDLE state\n", svid);
-                                // pd_control_g.pd_state = PD_STATE_IDLE;
-                                pd_control_g.pd_state = MIPPS_STATE_SEND_GET_SRC_CAP;
-                                break;
-                            }
-
                             if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_IDENTITY) {
+                                // Discover Identity ACK does not carry SVID list.
                                 pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_REQ_DISCOVER_SVIDS;
                                 break;
                             }
+
                             if (vdm_header.StructuredVDMHeader.Command == VDM_COMMAND_DISCOVER_SVIDS) {
+                                // Parse SVIDs from VDO list (each VDO has two 16-bit SVIDs).
+                                uint8_t vdo_count = header.MessageHeader.NumberOfDataObjects > 0
+                                                        ? (uint8_t)(header.MessageHeader.NumberOfDataObjects - 1)
+                                                        : 0;
+                                bool svid_found = false;
+
+                                for (uint8_t i = 0; i < vdo_count; i++) {
+                                    uint32_t vdo = *(uint32_t *)&rx_buffer[6 + (i * 4)];
+                                    uint16_t svid0 = (uint16_t)(vdo & 0xFFFFu);
+                                    uint16_t svid1 = (uint16_t)((vdo >> 16) & 0xFFFFu);
+                                    pd_printf("  SVID[%d]: 0x%04x 0x%04x\n", i, svid0, svid1);
+
+                                    if (svid0 == 0x2717 || svid1 == 0x2717) {
+                                        svid_found = true;
+                                    }
+                                }
+
+                                if (!svid_found) {
+                                    pd_printf("MIPPS: SVID 0x2717 not found, jumping to IDLE state\n");
+                                    pd_control_g.pd_state = MIPPS_STATE_SEND_GET_SRC_CAP;
+                                    break;
+                                }
+
                                 pd_control_g.pd_state = MIPPS_STATE_SEND_VDM_1;
                                 break;
                             }
